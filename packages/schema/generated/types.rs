@@ -167,3 +167,47 @@ pub struct SchemaItemEvents {
     /// Client-local: when this event was accepted by the sync server (0 = never pushed). Never sent on the wire and never stored server-side — it replaces a single global push watermark, so one unsyncable event strands only itself
     pub pushed_at: i64,
 }
+
+/// One row per page visit: when it happened, how long the page was in front of the user, where it came from, and the visit before and after it. A visit changes after it is written (duration, prevId, nextId), so the server upserts on id
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaItemVisits {
+    /// Unique identifier (UUID)
+    pub id: String,
+    #[serde(rename = "itemId")]
+    /// Reference to the visited item
+    pub item_id: String,
+    /// When the visit began (Unix ms)
+    pub timestamp: i64,
+    /// Milliseconds the page was in front of the user; written once, when the visit ends
+    pub duration: i64,
+    /// Where the visit came from
+    pub source: String,
+    #[serde(rename = "sourceId")]
+    /// Identifier of the source
+    pub source_id: String,
+    #[serde(rename = "windowType")]
+    /// Kind of window the page was shown in
+    pub window_type: String,
+    /// JSON metadata object
+    pub metadata: String,
+    #[serde(rename = "scrollDepth")]
+    /// How far the page was scrolled
+    pub scroll_depth: i64,
+    /// 1 if the user interacted with the page
+    pub interacted: i64,
+    #[serde(rename = "prevId")]
+    /// The visit before this one
+    pub prev_id: Option<String>,
+    #[serde(rename = "nextId")]
+    /// The visit after this one
+    pub next_id: Option<String>,
+    #[serde(rename = "createdAt")]
+    /// Creation timestamp on the server (Unix ms)
+    pub created_at: i64,
+    #[serde(rename = "updatedAt")]
+    /// Server-stamped time of the last save (Unix ms); pulls page by it
+    pub updated_at: i64,
+    #[serde(rename = "pushedAt")]
+    /// Client-local: when this visit was last accepted by the sync server (0 = never pushed, or changed since). Never sent on the wire and never stored server-side
+    pub pushed_at: i64,
+}

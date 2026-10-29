@@ -136,8 +136,42 @@ export interface SchemaItemEvents {
   pushedAt: number;
 }
 
+/** One row per page visit: when it happened, how long the page was in front of the user, where it came from, and the visit before and after it. A visit changes after it is written (duration, prevId, nextId), so the server upserts on id */
+export interface SchemaItemVisits {
+  /** Unique identifier (UUID) */
+  id: string;
+  /** Reference to the visited item */
+  itemId: string;
+  /** When the visit began (Unix ms) */
+  timestamp: number;
+  /** Milliseconds the page was in front of the user; written once, when the visit ends */
+  duration: number;
+  /** Where the visit came from */
+  source: string;
+  /** Identifier of the source */
+  sourceId: string;
+  /** Kind of window the page was shown in */
+  windowType: string;
+  /** JSON metadata object */
+  metadata: string;
+  /** How far the page was scrolled */
+  scrollDepth: number;
+  /** 1 if the user interacted with the page */
+  interacted: number;
+  /** The visit before this one */
+  prevId: string | null;
+  /** The visit after this one */
+  nextId: string | null;
+  /** Creation timestamp on the server (Unix ms) */
+  createdAt: number;
+  /** Server-stamped time of the last save (Unix ms); pulls page by it */
+  updatedAt: number;
+  /** Client-local: when this visit was last accepted by the sync server (0 = never pushed, or changed since). Never sent on the wire and never stored server-side */
+  pushedAt: number;
+}
+
 /** Valid sync table names */
-export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'rules' | 'item_events';
+export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'rules' | 'item_events' | 'item_visits';
 
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {

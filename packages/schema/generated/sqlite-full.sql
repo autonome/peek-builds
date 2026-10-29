@@ -104,3 +104,26 @@ CREATE TABLE IF NOT EXISTS item_events (
 
 CREATE INDEX IF NOT EXISTS idx_item_events_item_time ON item_events(itemId, occurredAt DESC);
 CREATE INDEX IF NOT EXISTS idx_item_events_occurred ON item_events(occurredAt DESC);
+
+-- One row per page visit: when it happened, how long the page was in front of the user, where it came from, and the visit before and after it. A visit changes after it is written (duration, prevId, nextId), so the server upserts on id
+CREATE TABLE IF NOT EXISTS item_visits (
+  id TEXT PRIMARY KEY NOT NULL,
+  itemId TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  duration INTEGER DEFAULT 0,
+  source TEXT DEFAULT 'direct',
+  sourceId TEXT DEFAULT '',
+  windowType TEXT DEFAULT 'main',
+  metadata TEXT DEFAULT '{}',
+  scrollDepth INTEGER DEFAULT 0,
+  interacted INTEGER DEFAULT 0,
+  prevId TEXT,
+  nextId TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  pushedAt INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_visits_itemId ON item_visits(itemId);
+CREATE INDEX IF NOT EXISTS idx_item_visits_timestamp ON item_visits(timestamp);
+CREATE INDEX IF NOT EXISTS idx_item_visits_updatedAt ON item_visits(updatedAt);
