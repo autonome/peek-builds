@@ -155,6 +155,9 @@ for (const scenario of [
   { name: 'zero identities at all', valid: '0 valid identities found', all: '0 identities found' },
   { name: 'identities present but none valid', valid: '0 valid identities found',
     all: `  1) ${'B'.repeat(40)} "${IDENTITY}" (CSSMERR_TP_NOT_TRUSTED)\n`, reason: 'CSSMERR_TP_NOT_TRUSTED' },
+  { name: 'identities present but none valid (reason in valid-only query)',
+    valid: `  1) ${'B'.repeat(40)} "${IDENTITY}" (CSSMERR_TP_CERT_EXPIRED)\n`,
+    all: `  1) ${'B'.repeat(40)} "${IDENTITY}"\n`, reason: 'CSSMERR_TP_CERT_EXPIRED' },
   { name: 'valid identity name/count mismatch', valid: `  1) ${'B'.repeat(40)} "Another Owner"\n`, all: '', reason: 'Another Owner' },
 ]) {
   test(`identity failure explains ${scenario.name} without private output`, async t => {
@@ -165,7 +168,7 @@ for (const scenario of [
     try { await assert.rejects(f.execute(), { code: 'imported-identity' }); }
     finally { console.error = original; }
     const log = lines.join('\n');
-    assert.ok(log.includes(scenario.name));
+    assert.ok(log.includes(scenario.name.split(' (')[0]));
     if (scenario.reason) assert.ok(log.includes(scenario.reason));
     if (scenario.name.startsWith('valid')) assert.ok(log.includes(IDENTITY));
     assert.ok(!log.includes(secrets.MACOS_CERTIFICATE_PASSWORD));

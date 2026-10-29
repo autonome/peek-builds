@@ -401,10 +401,14 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
         // child-output boundary. JSON quoting prevents multiline/log injection.
         if (matches.length === 0) {
           const all = await text('security', ['find-identity', '-p', 'codesigning', keychain]);
-          const present = [...all.matchAll(/^\s*\d+\) [A-Fa-f0-9]{40} "([^"\r\n]+)"(?:[ \t]+\(([^\r\n)]*)\))?[ \t]*$/gm)];
+          const present = [...(identities + '\n' + all).matchAll(/^\s*\d+\) [A-Fa-f0-9]{40} "([^"\r\n]+)"(?:[ \t]+\(([^\r\n)]*)\))?[ \t]*$/gm)];
           console.error(present.length ? 'macOS identity diagnostic: identities present but none valid' :
             'macOS identity diagnostic: zero identities at all');
+          const reported = new Set();
           for (const entry of present) {
+            // Prefer reason-bearing rows if a tool version repeats a bare name.
+            if (reported.has(entry[1]) || (!entry[2] && present.some(e => e[1] === entry[1] && e[2]))) continue;
+            reported.add(entry[1]);
             const reason = /^CSSMERR_[A-Z0-9_]+$/.test(entry[2] || '') ? entry[2] : 'trust reason unavailable';
             console.error(`macOS identity diagnostic: name=${JSON.stringify(entry[1])}; trust=${reason}`);
           }
