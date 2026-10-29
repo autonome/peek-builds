@@ -594,6 +594,7 @@ async function doUpdateParamSuggestions() {
 
   state.paramSuggestions = suggestions;
   state.paramIndex = suggestions.length > 0 ? 0 : -1;
+  state.paramNavigated = false;
   const row = suggestions.length === 0 ? noMatchRow(paramDef, searchPartial) : null;
   state.paramNoMatch = row ? { ...row, command: state.paramCommand } : null;
 
@@ -2396,11 +2397,13 @@ function actionHandlers() {
     navigateParamDown() {
       const n = state.paramSuggestions.length;
       state.paramIndex = (state.paramIndex + 1) % n;
+      state.paramNavigated = true;
     },
 
     navigateParamUp() {
       const n = state.paramSuggestions.length;
       state.paramIndex = state.paramIndex <= 0 ? n - 1 : state.paramIndex - 1;
+      state.paramNavigated = true;
     },
 
     navigateOutputDown() {

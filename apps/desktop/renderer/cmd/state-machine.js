@@ -13,6 +13,8 @@
  *   machine.dispatch(Events.INPUT, { value: 'tags' });
  */
 
+import { parseTagQuery } from './tag-query.js';
+
 // ===== Derived UI State =====
 // One owner for "is the results list open" and "which row is selected".
 // Both DERIVE from (currentState, data) — there is no boolean flag to go stale.
@@ -199,6 +201,8 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
     paramCommand: null,
     paramSuggestions: [],
     paramIndex: -1,
+    // True once the user arrows onto a suggestion; paramIndex alone can't say, since fresh suggestions default it to 0.
+    paramNavigated: false,
     paramGeneration: 0,
 
     // Execution
@@ -238,6 +242,15 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       const cmd = data.paramCommand && data.commands[data.paramCommand];
       const paramDef = cmd && cmd.params && cmd.params[0];
       return paramDef && paramDef.type === 'item';
+    },
+    // The text typed after the command is a tag query (every token a #tag) and the user
+    // has not arrowed onto a suggestion. Enter then runs the command with the typed text
+    // instead of accepting the auto-picked first suggestion.
+    paramTextIsUnhighlightedTagQuery: () => {
+      if (data.paramNavigated) return false;
+      const name = data.paramCommand || '';
+      const rest = (data.typed || '').trim().slice(name.length);
+      return parseTagQuery(rest) !== null;
     },
     hasUrlGhost: (payload) => payload?.hasUrlGhost === true,
     urlGhostAcceptable: (payload) => payload?.urlGhostAcceptable === true,
@@ -676,12 +689,13 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       ],
       [Events.ENTER]: [
         {
-          guard: (p) => guard('isItemTypeParam', p) && guard('hasParamSuggestions', p),
+          guard: (p) => guard('isItemTypeParam', p) && guard('hasParamSuggestions', p)
+            && !guard('paramTextIsUnhighlightedTagQuery', p),
           target: States.EXECUTING,
           actions: ['acceptParamItem', 'exitParamMode'],
         },
         {
-          // Non-item param or no suggestions — execute with typed text
+          // Non-item param, no suggestions, or an un-highlighted tag query — execute with typed text
           target: States.EXECUTING,
           actions: ['fillHighlightedParam', 'recordFrecency', 'executeCommandWithParams', 'clearInput', 'exitParamMode', 'updateGhostText', 'updateResults'],
         },
@@ -1044,6 +1058,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       data.paramCommand = null;
       data.paramSuggestions = [];
       data.paramIndex = -1;
+      data.paramNavigated = false;
     }
 
     if (currentState !== States.OUTPUT_SELECTION) {
@@ -1114,6 +1129,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       data.paramCommand = null;
       data.paramSuggestions = [];
       data.paramIndex = -1;
+      data.paramNavigated = false;
       data.executingCommand = null;
       data.executionTimeout = null;
       data.executionError = null;
