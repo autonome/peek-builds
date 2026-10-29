@@ -34,9 +34,14 @@ describe('normalizePastedUrl', () => {
 });
 
 describe('classifyPaste', () => {
-  it('prefers an image file over text', () => {
+  it('prefers image files over text', () => {
     const file = { type: 'image/png' };
-    assert.deepEqual(classifyPaste(clip({ files: [file], text: 'example.com' })), { kind: 'image', file });
+    assert.deepEqual(classifyPaste(clip({ files: [file], text: 'example.com' })), { kind: 'images', files: [file] });
+  });
+  it('returns every pasted image', () => {
+    const a = { type: 'image/png' };
+    const b = { type: 'image/jpeg' };
+    assert.deepEqual(classifyPaste(clip({ files: [a, b] })), { kind: 'images', files: [a, b] });
   });
   it('classifies URL text', () => {
     assert.deepEqual(classifyPaste(clip({ text: 'example.com' })), { kind: 'url', url: 'https://example.com' });

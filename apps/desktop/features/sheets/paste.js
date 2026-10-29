@@ -4,7 +4,7 @@
  * the DataTransfer-shaped objects passed in.
  */
 
-import { pickImageFile } from './image-drop.js';
+import { pickImageFiles } from './image-drop.js';
 
 const SCHEME_URL = /^(https?|peek):\/\/\S+$/i;
 const BARE_DOMAIN = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?::\d+)?(?:[/?#]\S*)?$/i;
@@ -27,12 +27,12 @@ export const normalizePastedUrl = (text) => {
  * Classify clipboard contents: an image file wins over text.
  *
  * @param {DataTransfer} clipboardData
- * @returns {{kind: 'image', file: File} | {kind: 'url', url: string} | null}
+ * @returns {{kind: 'images', files: File[]} | {kind: 'url', url: string} | null}
  */
 export const classifyPaste = (clipboardData) => {
   if (!clipboardData) return null;
-  const file = pickImageFile(clipboardData);
-  if (file) return { kind: 'image', file };
+  const files = pickImageFiles(clipboardData);
+  if (files.length) return { kind: 'images', files };
   const text = typeof clipboardData.getData === 'function' ? clipboardData.getData('text/plain') : '';
   const url = normalizePastedUrl(text);
   return url ? { kind: 'url', url } : null;

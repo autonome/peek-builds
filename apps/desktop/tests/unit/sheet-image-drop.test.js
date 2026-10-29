@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const mod = await import(join(__dirname, '..', '..', 'features', 'sheets', 'image-drop.js'));
 const {
-  dragHasFiles, pickImageFile, imageCardBounds, isImageItem,
+  dragHasFiles, pickImageFile, pickImageFiles, layoutCardRow, imageCardBounds, isImageItem,
   IMAGE_CARD_WIDTH, IMAGE_CARD_MIN_HEIGHT, IMAGE_CARD_MAX_HEIGHT
 } = mod;
 
@@ -36,6 +36,54 @@ describe('pickImageFile', () => {
     const dt = { files: [{ type: 'application/pdf' }], items: [{ kind: 'string', type: 'text/uri-list' }] };
     assert.equal(pickImageFile(dt), null);
     assert.equal(pickImageFile(null), null);
+  });
+});
+
+describe('pickImageFiles', () => {
+  const a = { type: 'image/png', name: 'a.png' };
+  const b = { type: 'image/jpeg', name: 'b.jpg' };
+  it('returns every image from files, skipping other types', () => {
+    assert.deepEqual(pickImageFiles({ files: [a, { type: 'text/plain' }, b] }), [a, b]);
+  });
+  it('prefers files over the same images listed as items', () => {
+    const items = [a, b].map((f) => ({ kind: 'file', type: f.type, getAsFile: () => f }));
+    assert.deepEqual(pickImageFiles({ files: [a, b], items }), [a, b]);
+  });
+  it('falls back to file items when files is empty', () => {
+    const items = [
+      { kind: 'string', type: 'text/plain' },
+      { kind: 'file', type: 'image/png', getAsFile: () => a },
+      { kind: 'file', type: 'image/jpeg', getAsFile: () => b },
+      { kind: 'file', type: 'image/png', getAsFile: () => a }
+    ];
+    assert.deepEqual(pickImageFiles({ files: [], items }), [a, b]);
+  });
+  it('returns an empty list when there is nothing', () => {
+    assert.deepEqual(pickImageFiles(null), []);
+    assert.deepEqual(pickImageFiles({ files: [{ type: 'application/pdf' }] }), []);
+  });
+});
+
+describe('layoutCardRow', () => {
+  const size = { w: 300, h: 100 };
+  it('places a single card at the start', () => {
+    assert.deepEqual(layoutCardRow({ x: 40, y: 60 }, [size], 1000, 10), [{ x: 40, y: 60, w: 300, h: 100 }]);
+  });
+  it('runs left to right a gap apart', () => {
+    const r = layoutCardRow({ x: 0, y: 0 }, [size, size, size], 1000, 10);
+    assert.deepEqual(r.map((c) => c.x), [0, 310, 620]);
+    assert.deepEqual(r.map((c) => c.y), [0, 0, 0]);
+  });
+  it('wraps below the tallest card of the row when the next would pass the edge', () => {
+    const r = layoutCardRow({ x: 20, y: 0 }, [size, { w: 300, h: 150 }, size], 700, 10);
+    assert.deepEqual(r.map((c) => [c.x, c.y]), [[20, 0], [330, 0], [20, 160]]);
+  });
+  it('never wraps the first card of a row', () => {
+    const r = layoutCardRow({ x: 0, y: 0 }, [size, size], 100, 10);
+    assert.deepEqual(r.map((c) => [c.x, c.y]), [[0, 0], [0, 110]]);
+  });
+  it('returns nothing for no cards', () => {
+    assert.deepEqual(layoutCardRow({ x: 0, y: 0 }, [], 500, 10), []);
   });
 });
 

@@ -30,18 +30,25 @@ export const dragHasFiles = (dataTransfer) => {
  * files list is empty. Returns null when there is none; links and text are
  * ignored.
  */
-export const pickImageFile = (dataTransfer) => {
-  if (!dataTransfer) return null;
-  for (const file of Array.from(dataTransfer.files || [])) {
-    if (file && isImageType(file.type)) return file;
-  }
+export const pickImageFile = (dataTransfer) => pickImageFiles(dataTransfer)[0] || null;
+
+/**
+ * Every image file in a DataTransfer. The files list wins when it holds any
+ * image, since the same images usually also appear as items; items are only
+ * read when the files list has none. Links and text are ignored.
+ */
+export const pickImageFiles = (dataTransfer) => {
+  if (!dataTransfer) return [];
+  const fromFiles = Array.from(dataTransfer.files || []).filter((file) => file && isImageType(file.type));
+  if (fromFiles.length) return fromFiles;
+  const fromItems = [];
   for (const item of Array.from(dataTransfer.items || [])) {
     if (item && item.kind === 'file' && isImageType(item.type)) {
       const file = typeof item.getAsFile === 'function' ? item.getAsFile() : null;
-      if (file) return file;
+      if (file && !fromItems.includes(file)) fromItems.push(file);
     }
   }
-  return null;
+  return fromItems;
 };
 
 /**
@@ -68,6 +75,37 @@ export const imageCardBounds = (point, image, snap = 0) => {
     w,
     h
   };
+};
+
+/**
+ * Lay several cards out left to right from a start point (the first card's
+ * top-left), a gap apart. A card that would pass the right edge starts a new
+ * row below the tallest card of the row above, back at the start column. The
+ * first card of a row is never wrapped, so a card wider than the grid still
+ * gets placed.
+ *
+ * @param {{x: number, y: number}} start top-left of the first card
+ * @param {Array<{w: number, h: number}>} sizes card sizes in order
+ * @param {number} width grid width (right edge)
+ * @param {number} gap space between cards
+ * @returns {Array<{x: number, y: number, w: number, h: number}>}
+ */
+export const layoutCardRow = (start, sizes, width, gap) => {
+  const rects = [];
+  let x = start.x;
+  let y = start.y;
+  let rowHeight = 0;
+  for (const { w, h } of sizes) {
+    if (x > start.x && x + w > width) {
+      x = start.x;
+      y += rowHeight + gap;
+      rowHeight = 0;
+    }
+    rects.push({ x, y, w, h });
+    x += w + gap;
+    rowHeight = Math.max(rowHeight, h);
+  }
+  return rects;
 };
 
 /** Whether a stored sheet item is an image card; items without a kind are webview cards. */

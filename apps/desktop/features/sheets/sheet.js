@@ -23,7 +23,7 @@ import {
   fitWithin, dataUrlToBlob, isStoredImageDataUrl, IMAGE_ENCODINGS, IMAGE_QUALITY
 } from './sheet-options.js';
 import {
-  CARD_IMAGE_MAX_SIDE, dragHasFiles, pickImageFile, imageCardBounds, isImageItem
+  CARD_IMAGE_MAX_SIDE, dragHasFiles, pickImageFiles, imageCardBounds, layoutCardRow, isImageItem
 } from './image-drop.js';
 import {
   classifyPaste, pastePoint, urlCardBounds, shouldIgnorePaste
@@ -418,20 +418,38 @@ const encodeBackgroundImage = async (file) => {
 };
 
 /**
- * Add an image card at a point (relative to the grid) from a dropped image file.
+ * Add one image card per dropped or pasted image file. The first card is
+ * centred on the point (relative to the grid); the rest follow it left to right,
+ * wrapping to a new row at the grid's right edge. Images that fail to encode are
+ * skipped.
  */
-const addImageCard = async (file, point) => {
+const addImageCards = async (files, point) => {
   const grid = document.querySelector('peek-grid.cards');
-  const { url, width, height } = await encodeImageWithin(file, CARD_IMAGE_MAX_SIDE, CARD_IMAGE_MAX_SIDE);
-  const bounds = imageCardBounds(point, { width, height }, grid.freeformSnap);
-  sheetConfig.items.push({
-    id: crypto.randomUUID().slice(0, 8),
-    kind: 'image',
-    image: url,
-    x: bounds.x,
-    y: bounds.y,
-    width: bounds.w,
-    height: bounds.h
+  const encoded = [];
+  for (const file of files) {
+    try {
+      encoded.push(await encodeImageWithin(file, CARD_IMAGE_MAX_SIDE, CARD_IMAGE_MAX_SIDE));
+    } catch (err) {
+      console.error('[sheets] Failed to encode image:', err);
+    }
+  }
+  if (!encoded.length) return;
+  const first = imageCardBounds(point, encoded[0], grid.freeformSnap);
+  const sizes = encoded.map((img) => {
+    const b = imageCardBounds(point, img, grid.freeformSnap);
+    return { w: b.w, h: b.h };
+  });
+  const rects = layoutCardRow({ x: first.x, y: first.y }, sizes, gridBounds(grid).right, grid.gap);
+  encoded.forEach((img, i) => {
+    sheetConfig.items.push({
+      id: crypto.randomUUID().slice(0, 8),
+      kind: 'image',
+      image: img.url,
+      x: rects[i].x,
+      y: rects[i].y,
+      width: rects[i].w,
+      height: rects[i].h
+    });
   });
   await saveSheetConfig();
   renderCards();
@@ -449,11 +467,11 @@ const setupImageDrop = () => {
   grid.addEventListener('drop', async (e) => {
     if (!dragHasFiles(e.dataTransfer)) return;
     e.preventDefault();
-    const file = pickImageFile(e.dataTransfer);
-    if (!file) return;
+    const files = pickImageFiles(e.dataTransfer);
+    if (!files.length) return;
     const rect = grid.getBoundingClientRect();
     try {
-      await addImageCard(file, { x: e.clientX - rect.left, y: e.clientY - rect.top });
+      await addImageCards(files, { x: e.clientX - rect.left, y: e.clientY - rect.top });
     } catch (err) {
       console.error('[sheets] Failed to add dropped image:', err);
     }
@@ -487,8 +505,8 @@ const setupPaste = () => {
     const bounds = gridBounds(grid);
     const point = pastePoint(pointer, { width: bounds.right, height: bounds.bottom });
     try {
-      if (pasted.kind === 'image') {
-        await addImageCard(pasted.file, point);
+      if (pasted.kind === 'images') {
+        await addImageCards(pasted.files, point);
       } else {
         await addCard(pasted.url, urlCardBounds(point, { w: SLOT_W, h: SLOT_H }, grid.freeformSnap));
       }
