@@ -30,10 +30,25 @@ import {
   classifyPaste, pastePoint, urlCardBounds, clickCardBounds, normalizePastedUrl, shouldIgnorePaste
 } from './paste.js';
 
+import { createThumbnailScheduler, captureSheetThumbnail } from './sheet-thumbnail.js';
+
 const api = window.app;
 
 let sheetId = null;
 let sheetConfig = null;
+
+// Retakes the sheet's list-card thumbnail once the sheet has settled.
+const thumbnails = createThumbnailScheduler({
+  capture: async () => {
+    try {
+      if (await captureSheetThumbnail(api, sheetId)) {
+        api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId });
+      }
+    } catch (error) {
+      console.error('[sheets] Failed to capture thumbnail:', error);
+    }
+  }
+});
 
 /**
  * Parse sheetId from URL query params
@@ -58,6 +73,7 @@ const saveSheetConfig = async () => {
     console.error('[sheets] Failed to save config:', result.error);
     return;
   }
+  thumbnails.requestAfterEdit();
 };
 
 /**
@@ -916,6 +932,8 @@ const init = async () => {
 
   // The view is drawn; a spec can wait for this rather than for a card count.
   document.body.dataset.ready = 'true';
+
+  thumbnails.requestFirst();
 };
 
 // On module evaluation, ahead of `init()` and of its first await, so a switch

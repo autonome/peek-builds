@@ -36,11 +36,23 @@ const DELETE_ICON =
  *   control does not trigger onClick
  * @param {string} [opts.deleteTitle] tooltip of the delete control
  * @param {string} [opts.id] stored as data-card-id
+ * @param {string} [opts.image] image URL shown edge-to-edge above the title;
+ *   a card without one looks as before
  */
-export const createCard = ({ title, meta, onClick, onDelete, deleteTitle, id }) => {
+export const createCard = ({ title, meta, onClick, onDelete, deleteTitle, id, image }) => {
   const card = document.createElement('peek-card');
   card.interactive = true;
   if (id !== undefined) card.dataset.cardId = id;
+
+  if (image) {
+    const img = document.createElement('img');
+    img.slot = 'media';
+    img.className = 'card-image';
+    img.alt = '';
+    img.src = image;
+    img.onerror = () => img.remove();
+    card.appendChild(img);
+  }
 
   const header = document.createElement('div');
   header.slot = 'header';

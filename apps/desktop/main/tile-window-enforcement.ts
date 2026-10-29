@@ -20,6 +20,7 @@ export type WindowOp =
   | 'fullscreen'
   | 'get-focused-visible-id'
   | 'get-see-through'
+  | 'capture-self'
   | 'set-see-through'
   | 'set-overlay-focus-target'
   | 'set-visible-on-all-workspaces'
@@ -127,6 +128,11 @@ export function checkWindowAllowed(
       if (cap.query !== true) {
         return { ok: false, error: 'window.query capability not granted' };
       }
+      return { ok: true };
+    }
+
+    case 'capture-self': {
+      // Only the caller's own page is captured, so any valid grant may.
       return { ok: true };
     }
 

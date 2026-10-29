@@ -9,6 +9,7 @@
 
 import { mountCardView, createCard } from 'peek://app/lib/card-view.js';
 import { loadSheet, saveSheet, loadSheetsMap, createSheet, deleteSheet } from './sheet-store.js';
+import { loadThumbnail, clearThumbnail } from './sheet-thumbnail.js';
 import { startNameEdit, isNameEditing } from './inline-name-edit.js';
 import { SHEET_OPEN_TOPIC, SHEETS_CHANGED_TOPIC, SHEET_DELETED_TOPIC } from './sheet-hotkeys.js';
 import { sheetIdOfKey, normalizeSheetName, withSheetName } from './sheet-commands.js';
@@ -29,6 +30,7 @@ const confirmDeleteSheet = async (sheet) => {
     console.error('[ext:sheets] Failed to delete sheet:', result.error);
     return;
   }
+  await clearThumbnail(api, sheet.id);
   // Closes an open window of the sheet, then refreshes lists and name options.
   api.pubsub.publish(SHEET_DELETED_TOPIC, { sheetId: sheet.id });
   api.pubsub.publish(SHEETS_CHANGED_TOPIC, { sheetId: sheet.id });
@@ -100,6 +102,7 @@ const render = () => {
         id: sheet.id,
         title: sheet.name,
         meta: cardCountText(sheet),
+        image: sheet.thumbnail || undefined,
         deleteTitle: `Delete sheet ${sheet.name}`,
         onDelete: () => confirmDeleteSheet(sheet)
       });
@@ -112,10 +115,14 @@ const render = () => {
 
 const loadSheets = async () => {
   const map = await loadSheetsMap(api);
-  sheets = Object.entries(map)
+  const loaded = Object.entries(map)
     .filter(([, config]) => config && typeof config.name === 'string')
     .map(([key, config]) => ({ id: sheetIdOfKey(key), name: config.name, items: config.items }))
     .sort((a, b) => a.name.localeCompare(b.name));
+  await Promise.all(loaded.map(async (sheet) => {
+    sheet.thumbnail = await loadThumbnail(api, sheet.id).catch(() => null);
+  }));
+  sheets = loaded;
   render();
 };
 

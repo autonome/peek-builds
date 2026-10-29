@@ -1009,6 +1009,19 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
+     * Screenshot the calling window as a JPEG data URL, `width` px wide.
+     * Resolves to `{ success, data: { dataUrl } }`. Needs no `window`
+     * capability since only the caller's own page is captured.
+     */
+    captureSelf: (opts?: { width?: number; quality?: number }) => {
+      return ipcRenderer.invoke('tile:window:capture-self', {
+        token: tileToken,
+        width: opts?.width,
+        quality: opts?.quality,
+      });
+    },
+
+    /**
      * Turn the see-through look on or off for a window: the frosted look
      * the windows switcher uses. `on` is explicit, not a toggle — read the
      * current state with `getSeeThrough` first. The window is never moved,

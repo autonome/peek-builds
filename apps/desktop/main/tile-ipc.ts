@@ -4194,6 +4194,37 @@ export function registerTileIpcHandlers(): void {
     }
   });
 
+  // ── tile:window:capture-self ──────────────────────────────────────
+  //
+  // Screenshot the calling window, scaled to `width` px wide, as a JPEG data
+  // URL. Only the caller's own page is captured, so no `window` capability is
+  // needed. The caller decides where to keep the result (the sheets list keeps
+  // one per sheet as its card image).
+  registerTileIpc('tile:window:capture-self', { mode: 'handle' }, async (event, args: {
+    token: string;
+    width?: number;
+    quality?: number;
+  }, _grant) => {
+    const check = checkWindowAllowed(_grant, 'capture-self');
+    if (!check.ok) {
+      handleViolation(_grant, 'window', 'window:capture-self', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+    try {
+      const wc = event.sender;
+      if (wc.isDestroyed()) return { success: false, error: 'Window not found' };
+      const width = Math.min(Math.max(Math.round(Number(args.width) || 400), 16), 1600);
+      const quality = Math.min(Math.max(Math.round(Number(args.quality) || 70), 1), 100);
+      const image = await wc.capturePage();
+      if (image.isEmpty()) return { success: false, error: 'Empty capture' };
+      const jpeg = image.resize({ width }).toJPEG(quality);
+      return { success: true, data: { dataUrl: `data:image/jpeg;base64,${jpeg.toString('base64')}` } };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
   // ── tile:window:set-see-through ───────────────────────────────────
   //
   // Turn the see-through look on or off for one window. Gated by

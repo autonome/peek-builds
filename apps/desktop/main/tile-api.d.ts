@@ -204,6 +204,12 @@ interface TileWindow {
   getSeeThrough(id?: number): Promise<{ success: boolean; data?: { supported: boolean; seeThrough: boolean }; error?: string }>;
 
   /**
+   * Screenshot the calling window as a JPEG data URL, `width` px wide. Needs
+   * no `window` capability since only the caller's own page is captured.
+   */
+  captureSelf(opts?: { width?: number; quality?: number }): Promise<{ success: boolean; data?: { dataUrl: string }; error?: string }>;
+
+  /**
    * Turn the see-through look (frosted, as the windows switcher looks) on
    * or off for a window. `on` is explicit rather than a toggle. The window
    * is never moved, resized or maximized by this. A window whose view does not declare `seeThrough: true` on its
