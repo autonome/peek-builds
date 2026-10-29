@@ -113,7 +113,6 @@
         "type": "window",
         "url": "peek://spaces/home.html",
         "options": {
-          "key": "spaces-home",
           "width": 800,
           "height": 600,
           "role": "workspace",
