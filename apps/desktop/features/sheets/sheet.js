@@ -10,6 +10,7 @@ import { withSheetName } from './sheet-commands.js';
 import { startNameEdit, isNameEditing } from './inline-name-edit.js';
 import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
 import { pushLayout } from 'peek://app/lib/push-layout.js';
+import { createKeydownHandler, getCards } from 'peek://app/lib/grid-nav.js';
 import {
   MIN_CARD_W, MIN_CARD_H, isDrag, rectFromPoints, dragRectToGrid
 } from './drag-rect.js';
@@ -303,10 +304,37 @@ const setupDrawCard = (grid) => {
   grid.addEventListener('pointercancel', endDrawing);
 };
 
+const keyNavState = { selectedIndex: -1 };
+
+/** True while a key belongs to a text field, the title edit, or an open dialog/panel. */
+const keyNavShouldIgnore = (e) => {
+  if (e.defaultPrevented) return true;
+  const t = e.target;
+  if (t && t.closest && t.closest('input, textarea, select, [contenteditable], peek-input, peek-select')) return true;
+  const open = (sel) => {
+    const el = document.querySelector(sel);
+    return !!el && el.style.display !== 'none';
+  };
+  return open('.add-dialog') || open('.options-panel');
+};
+
+const keyNavHandler = createKeydownHandler(keyNavState, {
+  spatial: true,
+  shouldIgnore: keyNavShouldIgnore,
+  // Escape stays with the escape handler below (it closes the window or ends a draw)
+  onActivate: () => {
+    const card = getCards()[keyNavState.selectedIndex];
+    const webview = card && card.querySelector('webview');
+    if (webview) webview.focus();
+  }
+});
+
 /**
  * Set up event listeners
  */
 const setupEvents = () => {
+  document.addEventListener('keydown', keyNavHandler);
+
   // Add dialog
   document.querySelector('.btn-add').addEventListener('click', showAddDialog);
   document.querySelector('.add-dialog-backdrop').addEventListener('click', hideAddDialog);

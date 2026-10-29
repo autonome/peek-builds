@@ -76,11 +76,58 @@ export const getGridColumns = (cards) => {
   return cards.length;
 };
 
+const SPATIAL_KEYS = {
+  j: 'down', ArrowDown: 'down',
+  k: 'up', ArrowUp: 'up',
+  h: 'left', ArrowLeft: 'left',
+  l: 'right', ArrowRight: 'right'
+};
+
+/**
+ * Index of the rect nearest to `rects[from]` in a direction, for free-placed
+ * cards that have no row/column order. Only rects whose center lies strictly
+ * in that direction are candidates; sideways offset counts double so a card
+ * straight ahead beats a closer one off to the side.
+ *
+ * @param {Array<{left:number, top:number, width:number, height:number}>} rects
+ * @param {number} from - index of the current rect
+ * @param {'up'|'down'|'left'|'right'} dir
+ * @returns {number} the nearest index, or -1 when nothing lies that way
+ */
+export const findNearestInDirection = (rects, from, dir) => {
+  const cur = rects[from];
+  if (!cur) return -1;
+  const cx = cur.left + cur.width / 2;
+  const cy = cur.top + cur.height / 2;
+  let best = -1;
+  let bestScore = Infinity;
+  rects.forEach((r, i) => {
+    if (i === from) return;
+    const dx = r.left + r.width / 2 - cx;
+    const dy = r.top + r.height / 2 - cy;
+    let along;
+    let across;
+    if (dir === 'right') { along = dx; across = dy; }
+    else if (dir === 'left') { along = -dx; across = dy; }
+    else if (dir === 'down') { along = dy; across = dx; }
+    else { along = -dy; across = dx; }
+    if (along <= 0) return;
+    const score = along + 2 * Math.abs(across);
+    if (score < bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  });
+  return best;
+};
+
 /**
  * Create a keydown handler for vim-style grid navigation.
  *
  * @param {object} state - must have `selectedIndex` property
  * @param {object} [callbacks] - optional hooks
+ * @param {boolean} [callbacks.spatial] - move to the nearest card in the pressed
+ *   direction by on-screen position instead of by row/column index (free-placed cards)
  * @param {function} [callbacks.onActivate] - called on Enter (default: activateSelected)
  * @param {function} [callbacks.onEscape] - called on Escape key
  * @param {function} [callbacks.shouldIgnore] - return true to skip handling entirely
@@ -102,6 +149,26 @@ export const createKeydownHandler = (state, callbacks = {}) => {
 
     const cards = getCards();
     if (cards.length === 0) return;
+
+    if (callbacks.spatial) {
+      const dir = SPATIAL_KEYS[e.key];
+      if (dir) {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault();
+        if (!(state.selectedIndex >= 0 && state.selectedIndex < cards.length)) {
+          state.selectedIndex = 0;
+          updateSelection(state);
+          return;
+        }
+        const rects = cards.map((c) => c.getBoundingClientRect());
+        const next = findNearestInDirection(rects, state.selectedIndex, dir);
+        if (next >= 0) {
+          state.selectedIndex = next;
+          updateSelection(state);
+        }
+        return;
+      }
+    }
 
     const cols = getGridColumns(cards);
 
