@@ -14,6 +14,7 @@ import { getSuggestions, limitShown, invalidateCache as invalidateCompleterCache
 import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
 import { recordPick, recordSuggestionPick, rankByUsage, pickedSuggestion } from './usage-rank.js';
 import { noMatchRow } from './no-match.js';
+import { tagQueryRow } from './tag-query-row.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { editorMessageForOutput } from './note-notice.js';
@@ -585,16 +586,20 @@ async function doUpdateParamSuggestions() {
       )
     : new Set();
 
-  const suggestions = limitShown(paramDef, rankByUsage(
+  const itemSuggestions = limitShown(paramDef, rankByUsage(
     await getSuggestions(paramDef, searchPartial, exclude), paramUsage, state.paramCommand, Date.now(),
     searchPartial, prefix
   ));
 
   if (generation !== state.paramGeneration) return;
 
+  // `edit #todo`: a first row that runs the command with the typed text (the tag query view)
+  const tagRow = await tagQueryRow(paramDef, [...completedTokens, partial].join(' '), api.datastore);
+  if (generation !== state.paramGeneration) return;
+  const suggestions = tagRow ? [tagRow, ...itemSuggestions] : itemSuggestions;
+
   state.paramSuggestions = suggestions;
   state.paramIndex = suggestions.length > 0 ? 0 : -1;
-  state.paramNavigated = false;
   const row = suggestions.length === 0 ? noMatchRow(paramDef, searchPartial) : null;
   state.paramNoMatch = row ? { ...row, command: state.paramCommand } : null;
 
@@ -2397,13 +2402,11 @@ function actionHandlers() {
     navigateParamDown() {
       const n = state.paramSuggestions.length;
       state.paramIndex = (state.paramIndex + 1) % n;
-      state.paramNavigated = true;
     },
 
     navigateParamUp() {
       const n = state.paramSuggestions.length;
       state.paramIndex = state.paramIndex <= 0 ? n - 1 : state.paramIndex - 1;
-      state.paramNavigated = true;
     },
 
     navigateOutputDown() {
@@ -2532,6 +2535,13 @@ function actionHandlers() {
       if (idx < 0 || idx >= len) return;
 
       const suggestion = state.paramSuggestions[idx];
+      if (suggestion.runTypedText) {
+        // Nothing to fill: this row runs the typed text as is
+        state.paramIndex = idx;
+        updateResultsUI();
+        updateCommandUI();
+        return;
+      }
       const input = commandInput();
       const commandName = state.paramCommand;
 

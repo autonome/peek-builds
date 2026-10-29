@@ -41,12 +41,10 @@ function makeMachine(overrideActions = {}, overrideGuards = {}) {
     navigateParamDown(payload, data) {
       const n = data.paramSuggestions.length;
       data.paramIndex = n ? (data.paramIndex + 1) % n : -1;
-      data.paramNavigated = true;
     },
     navigateParamUp(payload, data) {
       const n = data.paramSuggestions.length;
       data.paramIndex = n ? (data.paramIndex <= 0 ? n - 1 : data.paramIndex - 1) : -1;
-      data.paramNavigated = true;
     },
     navigateOutputDown(payload, data) { data.outputItemIndex++; },
     navigateOutputUp(payload, data) { data.outputItemIndex--; },
@@ -887,23 +885,35 @@ describe('PARAM_MODE transitions', () => {
     assert.equal(machine.getState(), States.EXECUTING);
   });
 
-  describe('Enter on a tag query', () => {
+  describe('tag query row', () => {
     beforeEach(() => {
       const data = machine.getMutableData();
       data.typed = 'edit #todo';
-      data.paramNavigated = false;
+      data.paramSuggestions = [
+        { title: 'All items tagged #todo (12)', runTypedText: true },
+        { title: 'Test Note', value: 'test-note', _item: { id: '123' } },
+      ];
       data.paramIndex = 0;
     });
 
-    it('executes with the typed text when no suggestion is highlighted', () => {
+    it('Enter on the highlighted row executes with the typed text', () => {
       machine._actionLog.length = 0;
       machine.dispatch(Events.ENTER);
+      assert.equal(machine.getState(), States.EXECUTING);
+      assert.ok(!machine._actionLog.includes('acceptParamItem'));
+      assert.ok(!machine._actionLog.includes('fillHighlightedParam'));
+      assert.ok(machine._actionLog.includes('executeCommandWithParams'));
+    });
+
+    it('clicking the row executes with the typed text', () => {
+      machine._actionLog.length = 0;
+      machine.dispatch(Events.CLICK_PARAM, { index: 0 });
       assert.equal(machine.getState(), States.EXECUTING);
       assert.ok(!machine._actionLog.includes('acceptParamItem'));
       assert.ok(machine._actionLog.includes('executeCommandWithParams'));
     });
 
-    it('still accepts a suggestion the user arrowed onto', () => {
+    it('Enter on a note arrowed down to accepts the note', () => {
       machine.dispatch(Events.ARROW_DOWN);
       machine._actionLog.length = 0;
       machine.dispatch(Events.ENTER);
@@ -912,18 +922,22 @@ describe('PARAM_MODE transitions', () => {
       assert.ok(!machine._actionLog.includes('executeCommandWithParams'));
     });
 
-    it('accepts the first suggestion for plain (non-tag) text', () => {
-      machine.getMutableData().typed = 'edit test';
+    it('clicking a note accepts the note', () => {
       machine._actionLog.length = 0;
-      machine.dispatch(Events.ENTER);
+      machine.dispatch(Events.CLICK_PARAM, { index: 1 });
       assert.ok(machine._actionLog.includes('acceptParamItem'));
+      assert.ok(!machine._actionLog.includes('executeCommandWithParams'));
     });
 
-    it('accepts the first suggestion for mixed tag and plain tokens', () => {
-      machine.getMutableData().typed = 'edit #todo notes';
+    it('plain text with no tag row accepts the first note', () => {
+      const data = machine.getMutableData();
+      data.typed = 'edit test';
+      data.paramSuggestions = [{ title: 'Test Note', value: 'test-note', _item: { id: '123' } }];
+      data.paramIndex = 0;
       machine._actionLog.length = 0;
       machine.dispatch(Events.ENTER);
       assert.ok(machine._actionLog.includes('acceptParamItem'));
+      assert.ok(!machine._actionLog.includes('executeCommandWithParams'));
     });
   });
 

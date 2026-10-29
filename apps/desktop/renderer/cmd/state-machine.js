@@ -13,8 +13,6 @@
  *   machine.dispatch(Events.INPUT, { value: 'tags' });
  */
 
-import { parseTagQuery } from './tag-query.js';
-
 // ===== Derived UI State =====
 // One owner for "is the results list open" and "which row is selected".
 // Both DERIVE from (currentState, data) — there is no boolean flag to go stale.
@@ -201,8 +199,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
     paramCommand: null,
     paramSuggestions: [],
     paramIndex: -1,
-    // True once the user arrows onto a suggestion; paramIndex alone can't say, since fresh suggestions default it to 0.
-    paramNavigated: false,
     paramGeneration: 0,
 
     // Execution
@@ -243,14 +239,11 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       const paramDef = cmd && cmd.params && cmd.params[0];
       return paramDef && paramDef.type === 'item';
     },
-    // The text typed after the command is a tag query (every token a #tag) and the user
-    // has not arrowed onto a suggestion. Enter then runs the command with the typed text
-    // instead of accepting the auto-picked first suggestion.
-    paramTextIsUnhighlightedTagQuery: () => {
-      if (data.paramNavigated) return false;
-      const name = data.paramCommand || '';
-      const rest = (data.typed || '').trim().slice(name.length);
-      return parseTagQuery(rest) !== null;
+    // The highlighted (Enter) or clicked (CLICK_PARAM) suggestion is a row that carries no
+    // item and means "run the command with the typed text" (e.g. the tag query row).
+    paramRowRunsTypedText: (payload) => {
+      const idx = payload?.index !== undefined ? payload.index : data.paramIndex;
+      return data.paramSuggestions[idx]?.runTypedText === true;
     },
     hasUrlGhost: (payload) => payload?.hasUrlGhost === true,
     urlGhostAcceptable: (payload) => payload?.urlGhostAcceptable === true,
@@ -689,18 +682,28 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       ],
       [Events.ENTER]: [
         {
-          guard: (p) => guard('isItemTypeParam', p) && guard('hasParamSuggestions', p)
-            && !guard('paramTextIsUnhighlightedTagQuery', p),
+          // A row that runs the typed text (tag query) — no fill, the typed text is the argument
+          guard: 'paramRowRunsTypedText',
+          target: States.EXECUTING,
+          actions: ['recordFrecency', 'executeCommandWithParams', 'clearInput', 'exitParamMode', 'updateGhostText', 'updateResults'],
+        },
+        {
+          guard: (p) => guard('isItemTypeParam', p) && guard('hasParamSuggestions', p),
           target: States.EXECUTING,
           actions: ['acceptParamItem', 'exitParamMode'],
         },
         {
-          // Non-item param, no suggestions, or an un-highlighted tag query — execute with typed text
+          // Non-item param or no suggestions — execute with typed text
           target: States.EXECUTING,
           actions: ['fillHighlightedParam', 'recordFrecency', 'executeCommandWithParams', 'clearInput', 'exitParamMode', 'updateGhostText', 'updateResults'],
         },
       ],
       [Events.CLICK_PARAM]: [
+        {
+          guard: 'paramRowRunsTypedText',
+          target: States.EXECUTING,
+          actions: ['recordFrecency', 'executeCommandWithParams', 'clearInput', 'exitParamMode', 'updateGhostText', 'updateResults'],
+        },
         {
           guard: 'isItemTypeParam',
           target: States.EXECUTING,
@@ -1058,7 +1061,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       data.paramCommand = null;
       data.paramSuggestions = [];
       data.paramIndex = -1;
-      data.paramNavigated = false;
     }
 
     if (currentState !== States.OUTPUT_SELECTION) {
@@ -1129,7 +1131,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       data.paramCommand = null;
       data.paramSuggestions = [];
       data.paramIndex = -1;
-      data.paramNavigated = false;
       data.executingCommand = null;
       data.executionTimeout = null;
       data.executionError = null;
