@@ -3387,13 +3387,13 @@ export function isAppResignSweepEligible(record: WindowRecord): boolean {
 // the user works in, or a transient page-host window (a peek, a slide), on
 // screen at the base layer. A window declared above the base layer already
 // sits over other apps and needs no hold. Without it a page-host window built
-// as a flagged ordinary window is restacked behind the frontmost app.
+// as a flagged ordinary window is restacked behind the frontmost app. A
+// transient non-activating quick view built as a plain window (a sheet) is
+// flagged the same way and restacked the same way.
 export function admitsHoldAboveOtherApps(record: WindowRecord): boolean {
-  return (
-    record.kind === 'page-host' &&
-    record.layer === BASE_LAYER &&
-    (isContentWindow(record) || record.transient === true)
-  );
+  if (record.layer !== BASE_LAYER) return false;
+  if (record.kind === 'page-host') return isContentWindow(record) || record.transient === true;
+  return record.transient === true && record.nonActivating === true && record.role === 'quick-view';
 }
 
 // A transient window holding key it took from another app, directly or

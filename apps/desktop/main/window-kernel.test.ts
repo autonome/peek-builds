@@ -7963,6 +7963,15 @@ describe('window-kernel: a page asked forward while the app is inactive is held 
     assert.deepStrictEqual(holds(after.effects), [{ type: 'HoldAboveOtherApps', id: wid(1) }]);
   });
 
+  it('a transient non-activating quick view built as a plain window is held too', () => {
+    const after = foldWithEffects([
+      { type: 'AppResigned' },
+      ...openForward(wid(1), { kind: 'browser', role: 'quick-view', class: 'quick-view', transient: true, nonActivating: true }),
+    ]);
+    assert.strictEqual(record(after.state, wid(1)).heldAboveOtherApps, true);
+    assert.deepStrictEqual(holds(after.effects), [{ type: 'HoldAboveOtherApps', id: wid(1) }]);
+  });
+
   it('only a visible base-layer content page or transient page-host window is held', () => {
     const cases: Array<[string, Event[]]> = [
       ['a palette', openForward(wid(1), { role: 'palette', class: 'palette' })],
