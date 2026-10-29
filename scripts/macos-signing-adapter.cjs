@@ -299,7 +299,10 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       const stdout = await text('otool', [flag, 'target'], { cwd: directory });
       return parse(stdout, (reason, line) => {
         const relative = path.relative(inventoryBundle, target).split(path.sep).join('/');
-        const detail = safeReason(line);
+        // Print the line's shape: otool indents entries with a tab and install
+        // names carry @ and slashes, all of which the prose allowlist rejects.
+        const shape = line.replace(/\t/g, ' ').trim().replace(/[^\s()]*[@/][^\s()]*/g, 'NAME');
+        const detail = safeReason(shape);
         console.error(`macOS candidate tool target: ${JSON.stringify(relative)}; line=${detail ? JSON.stringify(detail) : '<redacted>'}`);
         console.error(`macOS candidate tool parse failed: reason=${reason}; flag=${flag}`);
         block(reason);

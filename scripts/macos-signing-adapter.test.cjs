@@ -199,8 +199,9 @@ test('fat llvm-otool output returns unions without architecture headers', async 
 
 for (const [flag, output, reason, offending] of [
   ['-L', 'not a header\n', 'otool-libraries', 'not a header'],
-  ['-L', 'target:\n bad dependency /private/keychains/private.keychain-db\n', 'otool-library-line', ' bad dependency <path>'],
-  ['-l', 'target:\n cmd LC_RPATH\n cmdsize 32\n bad path /private/keychains/private.keychain-db\n', 'otool-rpath', ' bad path <path>'],
+  ['-L', 'target:\n bad dependency /private/keychains/private.keychain-db\n', 'otool-library-line', 'bad dependency NAME'],
+  ['-L', 'target:\n\t@rpath/Example.framework/Example (weird suffix)\n', 'otool-library-line', 'NAME (weird suffix)'],
+  ['-l', 'target:\n cmd LC_RPATH\n cmdsize 32\n bad path /private/keychains/private.keychain-db\n', 'otool-rpath', 'bad path NAME'],
   ['-L', `target:\n ${secrets.MACOS_CERTIFICATE_PASSWORD}\n`, 'otool-library-line', null],
   ['-L', `target:\n ${'x'.repeat(241)}\n`, 'otool-library-line', null],
 ]) {
