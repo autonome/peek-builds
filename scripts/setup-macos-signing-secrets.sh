@@ -38,13 +38,13 @@ cleanup() {
   local status=$?
   if [[ -n $preflight_keychain ]]; then
     if ! security delete-keychain "$preflight_keychain" >/dev/null 2>&1; then
-      printf '%s\n' 'Error: Could not delete the temporary preflight keychain; inspect local scratch.' >&2
+      printf '%s\n' 'Error: Could not delete the temporary preflight keychain; scratch files will be removed, but local keychain registration may need inspection.' >&2
       status=1
     fi
   fi
-  [[ -z $preflight_dir ]] || rm -rf "$preflight_dir"
-  [[ -z $gh_config_dir ]] || rm -rf "$gh_config_dir"
-  return "$status"
+  [[ -z $preflight_dir ]] || rm -rf "$preflight_dir" || status=1
+  [[ -z $gh_config_dir ]] || rm -rf "$gh_config_dir" || status=1
+  exit "$status"
 }
 preflight() {
   local p12=$1 password=$2 identity=$3 keychain_password output line found='' count=0
