@@ -228,6 +228,15 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   let stage = 'idle';
   let inventoryBundle;
   const inventoryTools = new Set(['file', 'lipo', 'otool', 'codesign', 'spctl']);
+  const privateValues = new Set();
+  const rememberPrivate = values => {
+    for (const value of Object.values(values)) {
+      if (typeof value === 'string') for (const line of value.split(/\r?\n/)) {
+        if (line) privateValues.add(line);
+      }
+    }
+  };
+  rememberPrivate(env);
   // Preserve redacted bundle operands, hide all other absolute paths, and
   // allow only bounded per-line prose. Never echo known environment values.
   const safeReason = stderr => {
@@ -249,7 +258,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     const prose = first.replace(/"?<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*"?|'?<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*'?/g, 'bundle')
       .replaceAll('<path>', 'path');
     return first.length <= 240 && /^[A-Za-z0-9 .,:()_' -]+$/.test(prose) &&
-      !Object.values(env).some(value => typeof value === 'string' && value && first.includes(value)) ? first : '';
+      ![...privateValues].some(value => first.includes(value)) ? first : '';
   };
   const call = async (file, args, { diagnostic = false, ...opts } = {}) => {
     const operation = toolOperation(file, args);
@@ -265,10 +274,14 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
         }
       } catch { /* Diagnostic context must not change verification behavior. */ }
     }
-    const printStreams = (stderr, stdout) => {
+    const printStreams = (stderr, stdout, trailing = false) => {
       for (const [stream, value] of [['stderr', stderr], ['stdout', stdout]]) {
         if (typeof value !== 'string' || value === '') continue;
-        for (const [index, line] of value.split(/\r?\n/).slice(0, 8).entries()) {
+        const lines = value.split(/\r?\n/);
+        // Ignore the final line terminator, not meaningful blank output lines.
+        if (lines.at(-1) === '') lines.pop();
+        const selected = trailing ? lines.slice(-20) : lines.slice(0, 8);
+        for (const [index, line] of selected.entries()) {
           const detail = safeReason(line);
           console.error(`macOS candidate tool output: stage=${stage}; operation=${operation}${diagnostic ? '; diagnostic=verbose' : ''}; ${stream}[${index + 1}]=${detail ? JSON.stringify(detail) : '<redacted>'}`);
         }
@@ -286,7 +299,8 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       }
       const flag = { dependencies: '-L', 'dylib-id': '-D', 'load-commands': '-l' }[operation];
       console.error(`macOS candidate tool failed: stage=${stage}; operation=${operation}; reason=${reason}${exit}${flag ? `; flag=${flag}` : ''}`);
-      if (relativeTarget !== undefined || operation === 'staple-validate') printStreams(stderr, stdout);
+      const inventory = relativeTarget !== undefined || operation === 'staple-validate';
+      printStreams(stderr, stdout, !inventory);
       block(reason);
     };
     need(operation !== 'unknown', 'tool-operation');
@@ -469,6 +483,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       return Promise.all(['peek-desktop-helper', 'nonactivating-window.node'].map(name => native(path.join(root, 'apps/desktop/dist/native', name))));
     },
     async prepare(policy, secrets) {
+      rememberPrivate(secrets);
       let intermediate;
       try { intermediate = fs.readFileSync(path.join(root, 'scripts/DeveloperIDG2CA.cer')); }
       catch { block('intermediate-certificate'); }
@@ -478,6 +493,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       fs.chmodSync(scratch, 0o700);
       keychain = path.join(scratch, 'candidate.keychain-db');
       const password = crypto.randomBytes(32).toString('hex');
+      rememberPrivate({ password });
       const p12 = path.join(scratch, 'identity.p12');
       need(/^[A-Za-z0-9+/\r\n]+={0,2}$/.test(secrets.MACOS_CERTIFICATE_P12_BASE64), 'p12-base64');
       fs.writeFileSync(p12, Buffer.from(secrets.MACOS_CERTIFICATE_P12_BASE64, 'base64'), { mode: 0o600 });
@@ -536,6 +552,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       childEnv = { ...childEnv, TMPDIR: scratch, CSC_KEYCHAIN: keychain, CSC_NAME: identityHash,
         APPLE_KEYCHAIN: keychain, APPLE_KEYCHAIN_PROFILE: 'peek-candidate',
         PEEK_SIGNING_CANDIDATE: '1', PEEK_BUILD_VERSION: policy.buildVersion, PEEK_BUILD_COMMIT: policy.commit };
+      rememberPrivate(childEnv);
     },
     async pack(policy) {
       // Programmatic builder config extends the unsigned base, overriding null.

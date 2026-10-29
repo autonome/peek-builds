@@ -809,6 +809,44 @@ test('afterPack preserves unsigned stamping and enforces numeric signed build id
   assert.throws(() => stamp(context, { ...info, commit: 'b'.repeat(40) }));
 });
 
+for (const operation of ['builder', 'keychain-import', 'notary-store']) {
+  test(`${operation} failure prints only twenty sanitized trailing lines per stream`, async t => {
+    const logs = [];
+    t.mock.method(console, 'error', line => logs.push(line));
+    const f = fixture(t, {
+      fail: (file, args) => operation === 'builder' ? file === process.execPath :
+        operation === 'keychain-import' ? file === 'security' && args[0] === 'import' :
+          file === 'xcrun' && args[1] === 'store-credentials',
+      stderr: () => [
+        'Omitted first line', 'Omitted second line',
+        ...Array.from({ length: 12 }, () => 'Dependency collection failed'),
+        'Cannot copy "/Users/runner/build folder/private.js": missing',
+        "Cannot open '/private/keychain folder/candidate.keychain-db': denied",
+        secrets.MACOS_CERTIFICATE_PASSWORD,
+        secrets.APPLE_API_KEY_P8.split('\n')[1],
+        f.calls.find(c => c.file === 'security' && c.args[0] === 'create-keychain').args[2],
+        'x'.repeat(241), 'bad\u001b[31m', 'Final builder failure',
+      ].join('\n') + '\n',
+      stdout: ['Omitted stdout', ...Array.from({ length: 20 }, () => 'Build stopped')].join('\r\n') + '\r\n',
+    });
+    await assert.rejects(f.execute(), { code: 'tool-exit' });
+    const output = logs.filter(line => line.startsWith('macOS candidate tool output:'));
+    assert.equal(output.length, 40);
+    const prefix = `macOS candidate tool output: stage=${operation === 'builder' ? 'pack' : 'prepare'}; operation=${operation}; `;
+    assert.equal(output[0], prefix + 'stderr[1]="Dependency collection failed"');
+    assert.equal(output[12], prefix + 'stderr[13]="Cannot copy <path>: missing"');
+    assert.equal(output[13], prefix + 'stderr[14]="Cannot open <path>: denied"');
+    for (let i = 14; i < 19; i++) assert.equal(output[i], prefix + `stderr[${i + 1}]=<redacted>`);
+    assert.equal(output[19], prefix + 'stderr[20]="Final builder failure"');
+    assert.equal(output[39], prefix + 'stdout[20]="Build stopped"');
+    const log = logs.join('\n');
+    assert.doesNotMatch(log, /Omitted|\/Users\/|\/private\/|\u001b/);
+    for (const value of Object.values(secrets)) assert.ok(!log.includes(value));
+    assert.equal(fs.existsSync(f.output), false);
+    assert.deepEqual(fs.readdirSync(f.temp), []);
+  });
+}
+
 test('packaging excludes build-only universal and x86_64 prebuilds at source', () => {
   const root = path.resolve(__dirname, '..');
   const config = require('js-yaml').load(fs.readFileSync(path.join(root, 'apps/desktop/electron-builder.yml'), 'utf8'));
@@ -819,7 +857,16 @@ test('packaging excludes build-only universal and x86_64 prebuilds at source', (
     'node_modules/@electron-internal/extract-zip/index.darwin-universal.node',
     'node_modules/node-notifier/vendor/mac.noindex/terminal-notifier.app/Contents/MacOS/terminal-notifier',
     'node_modules/nested/node_modules/@electron-internal/extract-zip/index.darwin-universal.node',
+    'node_modules/nested/node_modules/node-notifier/vendor/mac.noindex/terminal-notifier.app/Contents/MacOS/terminal-notifier',
   ]) assert.equal(filter(path.join(root, relative), stat), false, relative);
+  // Keep traversal and metadata intact; a file-only glob test misses pruned
+  // package directories and therefore cannot exercise dependency collection.
+  for (const name of ['@electron-internal/extract-zip', 'node-notifier']) {
+    const directory = path.join(root, 'node_modules', name);
+    assert.equal(filter(directory, { isDirectory: () => true }), true, name);
+    assert.equal(filter(path.join(directory, 'package.json'), stat), true, name);
+    assert.equal(filter(path.join(directory, 'index.js'), stat), true, name);
+  }
   assert.equal(filter(path.join(root, 'apps/desktop/dist/main/entry.js'), stat), true);
   assert.equal(config.extraResources.some(e => e.to === 'peek-desktop-helper'), true);
   assert.equal(config.extraResources.some(e => e.to === 'nonactivating-window.node'), true);
