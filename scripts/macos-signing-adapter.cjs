@@ -121,21 +121,30 @@ function outputExists(output) {
   try { fs.lstatSync(output); return true; }
   catch (error) { if (error.code !== 'ENOENT') throw error; return false; }
 }
-function otoolLibraries(text) {
+const architectureHeader = line => /^\S.* \(architecture [A-Za-z0-9_]+\):$/.test(line);
+function otoolEntries(text, fail) {
   const lines = text.trimEnd().split('\n');
-  need(lines.length >= 1 && lines[0].endsWith(':'), 'otool-libraries');
-  return lines.slice(1).map(line => {
-    const m = /^\s+(.+?) \(compatibility version [^\n]+\)$/.exec(line);
-    need(m, 'otool-library-line'); return m[1];
-  });
+  if (!lines[0].endsWith(':')) fail('otool-libraries', lines[0]);
+  return lines.slice(1).filter(line => !architectureHeader(line));
 }
-function rpaths(text) {
+function otoolLibraries(text, fail = block) {
+  return [...new Set(otoolEntries(text, fail).map(line => {
+    const m = /^\s+(.+?) \(compatibility version [^\n]+\)$/.exec(line);
+    if (!m) fail('otool-library-line', line);
+    return m[1];
+  }))];
+}
+function otoolIds(text, fail = block) {
+  return [...new Set(otoolEntries(text, fail).map(line => line.trim()).filter(Boolean))];
+}
+function rpaths(text, fail = block) {
   const out = [];
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].trim() !== 'cmd LC_RPATH') continue;
     const m = /^\s*path (.+) \(offset \d+\)$/.exec(lines[i + 2] || '');
-    need(m, 'otool-rpath'); out.push(m[1]);
+    if (!m) fail('otool-rpath', lines[i + 2] || '');
+    out.push(m[1]);
   }
   return out;
 }
@@ -283,11 +292,18 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   const text = async (file, args, opts) => (await call(file, args, opts)).stdout;
   // LLVM treats a trailing name(member) operand as an archive member. Use a
   // fixed relative name so even parentheses in the scratch parent are harmless.
-  const otool = async (flag, target) => {
+  const otool = async (flag, target, parse) => {
     const directory = fs.mkdtempSync(path.join(scratchRoot, 'peek-otool-'));
     try {
       fs.symlinkSync(target, path.join(directory, 'target'));
-      return await text('otool', [flag, 'target'], { cwd: directory });
+      const stdout = await text('otool', [flag, 'target'], { cwd: directory });
+      return parse(stdout, (reason, line) => {
+        const relative = path.relative(inventoryBundle, target).split(path.sep).join('/');
+        const detail = safeReason(line);
+        console.error(`macOS candidate tool target: ${JSON.stringify(relative)}; line=${detail ? JSON.stringify(detail) : '<redacted>'}`);
+        console.error(`macOS candidate tool parse failed: reason=${reason}; flag=${flag}`);
+        block(reason);
+      });
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
@@ -332,14 +348,14 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     return found.sort();
   }
   async function dependencies(target, bundle, mainRpaths) {
-    const libraries = otoolLibraries(await otool('-L', target));
+    const libraries = await otool('-L', target, otoolLibraries);
     // LC_ID_DYLIB is the first -L entry for a dylib; it is not a dependency.
-    const ids = (await otool('-D', target)).trimEnd().split('\n').slice(1).map(s => s.trim());
+    const ids = await otool('-D', target, otoolIds);
     const role = roleFor(path.relative(bundle, target).split(path.sep).join('/'));
     const executableDir = role === 'library' ? path.join(bundle, 'Contents/MacOS') : path.dirname(target);
     const expand = value => value.replace(/^@loader_path(?=\/|$)/, path.dirname(target))
       .replace(/^@executable_path(?=\/|$)/, executableDir);
-    const localRpaths = rpaths(await otool('-l', target)).map(expand);
+    const localRpaths = (await otool('-l', target, rpaths)).map(expand);
     return libraries.filter(name => !ids.includes(name)).map(installName => {
       if (installName.startsWith('/')) return installName;
       const candidates = installName.startsWith('@rpath/') ? [...localRpaths, ...mainRpaths].map(p =>
@@ -362,7 +378,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     need(build.commit === policy.commit && build.dirty === false, 'build-info');
     const files = await discover(bundle);
     const mainDir = path.join(bundle, 'Contents/MacOS');
-    const mainRpaths = rpaths(await otool('-l', path.join(mainDir, 'Peek'))).map(p =>
+    const mainRpaths = (await otool('-l', path.join(mainDir, 'Peek'), rpaths)).map(p =>
       p.replace(/^@(loader_path|executable_path)(?=\/|$)/, mainDir));
     const inventory = [];
     for (const target of files) {
@@ -672,4 +688,4 @@ if (require.main === module) main().catch(error => {
   console.error(`macOS candidate blocked: ${code}${ids.length ? '; submission IDs: ' + ids.join(',') : ''}`);
   process.exitCode = 1;
 });
-module.exports = { createAdapter, runner, searchList, otoolLibraries, rpaths, roleFor, candidateRef, cleanEnv, sign, main };
+module.exports = { createAdapter, runner, searchList, otoolLibraries, otoolIds, rpaths, roleFor, candidateRef, cleanEnv, sign, main };

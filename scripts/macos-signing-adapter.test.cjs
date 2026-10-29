@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const plist = require('plist');
-const { createAdapter, searchList, otoolLibraries, rpaths, roleFor, candidateRef, cleanEnv, runner } = require('./macos-signing-adapter.cjs');
+const { createAdapter, searchList, otoolLibraries, otoolIds, rpaths, roleFor, candidateRef, cleanEnv, runner } = require('./macos-signing-adapter.cjs');
 const { runCandidate } = require('./macos-signing.cjs');
 const SHA = 'a'.repeat(40);
 const ID = '12345678-1234-1234-1234-123456789abc';
@@ -118,6 +118,8 @@ function fixture(t, mutation = {}) {
     }
     if (file === 'spctl') return ok('', `${target}: accepted\nsource=${mutation.gatekeeper || 'Notarized Developer ID'}\n`);
     if (file === 'otool') {
+      const override = mutation.otoolOutput?.(args[0], target);
+      if (override !== undefined) return ok(override);
       if (args[0] === '-L') return ok(`${operand}:\n${mutation.dylibId ? `\t${mutation.dylibId} (compatibility version 1.0.0, current version 1.0.0)\n` : ''}\t${mutation.dependency || '/usr/lib/libSystem.B.dylib'} (compatibility version 1.0.0, current version 1336.0.0)\n`);
       if (args[0] === '-D') return ok(`${operand}:\n${mutation.dylibId || ''}\n`);
       return ok('');
@@ -173,6 +175,46 @@ for (const failureFlag of [undefined, '-L', '-D', '-l']) {
     }
     assert.ok(directories.length > 0);
     for (const directory of directories) assert.equal(fs.existsSync(directory), false);
+  });
+}
+
+test('fat llvm-otool output returns unions without architecture headers', async t => {
+  const library = name => `\t${name} (compatibility version 1.0.0, current version 1.0.0)\n`;
+  const fat = (x86, arm) => `target (architecture x86_64):\n${x86}target (architecture arm64):\n${arm}`;
+  const self = '@rpath/fixture-self-id';
+  const system = '/usr/lib/libSystem.B.dylib';
+  const extra = '/usr/lib/libobjc.A.dylib';
+  const libraries = fat(library(self) + library(system), library(self) + library(system) + library(extra));
+  const ids = fat(self + '\n', self + '\n');
+  const loadCommands = fat('Load command 0\n          cmd LC_RPATH\n      cmdsize 32\n         path @loader_path (offset 12)\n',
+    'Load command 0\n          cmd LC_RPATH\n      cmdsize 48\n         path @executable_path/../Frameworks (offset 12)\n');
+  assert.deepEqual(otoolLibraries(libraries), [self, system, extra]);
+  assert.deepEqual(otoolIds(ids), [self]);
+  assert.deepEqual(otoolLibraries(fat('', '')), []);
+  assert.deepEqual(otoolIds(fat('', '')), []);
+  assert.deepEqual(rpaths(loadCommands), ['@loader_path', '@executable_path/../Frameworks']);
+  const f = fixture(t, { otoolOutput: flag => ({ '-L': libraries, '-D': ids, '-l': loadCommands })[flag] });
+  await f.execute(); // A leaked header or self ID would fail dyld resolution.
+});
+
+for (const [flag, output, reason, offending] of [
+  ['-L', 'not a header\n', 'otool-libraries', 'not a header'],
+  ['-L', 'target:\n bad dependency /private/keychains/private.keychain-db\n', 'otool-library-line', ' bad dependency <path>'],
+  ['-l', 'target:\n cmd LC_RPATH\n cmdsize 32\n bad path /private/keychains/private.keychain-db\n', 'otool-rpath', ' bad path <path>'],
+  ['-L', `target:\n ${secrets.MACOS_CERTIFICATE_PASSWORD}\n`, 'otool-library-line', null],
+  ['-L', `target:\n ${'x'.repeat(241)}\n`, 'otool-library-line', null],
+]) {
+  test(`parse failure ${reason} reports bounded sanitized context (${offending || 'redacted'})`, async t => {
+    const logs = [];
+    t.mock.method(console, 'error', line => logs.push(line));
+    const relative = flag === '-l' ? 'Contents/MacOS/Peek' : 'Contents/Frameworks/Example.framework/Versions/A/Example';
+    const f = fixture(t, { otoolOutput: (operation, target) =>
+      operation === flag && target.endsWith('/' + relative) ? output : undefined });
+    await assert.rejects(f.execute(), { code: reason });
+    assert.ok(logs.includes(`macOS candidate tool target: ${JSON.stringify(relative)}; line=${offending ? JSON.stringify(offending) : '<redacted>'}`));
+    assert.ok(logs.includes(`macOS candidate tool parse failed: reason=${reason}; flag=${flag}`));
+    assert.ok(!logs.join('\n').includes('/private/keychains'));
+    for (const value of Object.values(secrets)) assert.ok(!logs.join('\n').includes(value));
   });
 }
 
