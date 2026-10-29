@@ -66,7 +66,7 @@ function fixture(t, mutation = {}) {
       args.push('SEEDED-PRIVATE-ARGV');
       if (mutation.failureMode === 'throw') throw new Error('SEEDED-PRIVATE-ERROR ' + target);
       return { code: mutation.failureMode === 'status' ? 'SEEDED-PRIVATE-STATUS' : 73,
-        stdout: typeof mutation.stdout === 'function' ? mutation.stdout(target) : mutation.stdout ?? 'SECRET-TOOL-OUTPUT', stderr: typeof mutation.stderr === 'function' ? mutation.stderr(target) :
+        stdout: typeof mutation.stdout === 'function' ? mutation.stdout(target) : mutation.stdout ?? secrets.APPLE_API_KEY_ID, stderr: typeof mutation.stderr === 'function' ? mutation.stderr(target) :
           mutation.stderr ?? secrets.MACOS_CERTIFICATE_PASSWORD,
         quiescent: mutation.failureMode !== 'active' };
     }
@@ -104,6 +104,7 @@ function fixture(t, mutation = {}) {
       return ok();
     }
     if (file === 'xcrun') {
+      if (args[1] === 'validate' && args.includes('-v') && mutation.verboseOutput) return ok(mutation.verboseOutput);
       if (args[0] === 'notarytool') {
         if (args[1] === 'submit') return ok(mutation.invalidJSON ? 'garbage' : JSON.stringify({ id: ID }));
         if (args[1] === 'wait') return ok(JSON.stringify({ id: ID, status: mutation.notaryStatus || 'Accepted' }));
@@ -555,7 +556,7 @@ for (const flag of ['-L', '-D', '-l']) {
         (secret ? '' : `; ${stdout ? 'stdout' : 'stderr'}=${JSON.stringify(detail)}`));
       assert.ok(logs.some(value => value.endsWith(`; flag=${flag}`)));
       const log = logs.join('\n');
-      for (const value of [f.temp, '/Applications/', 'PRIVATE SECOND LINE', 'UNUSED STDOUT', ...Object.values(secrets)]) {
+      for (const value of [f.temp, '/Applications/', ...Object.values(secrets)]) {
         assert.ok(!log.includes(value));
       }
       assert.equal(fs.existsSync(f.output), false);
@@ -588,6 +589,10 @@ test('every reachable tool failure emits only fixed stage/operation/reason and b
           assert.ok(!target.includes('..'));
           continue;
         }
+        if (line.startsWith('macOS candidate tool output:')) {
+          assert.match(line, /; (?:stdout|stderr)\[[1-8]\]=<redacted>$/);
+          continue;
+        }
         assert.match(line, /^macOS candidate tool failed: stage=(?:preflight|prepare|pack|signApp|submitApp|stapleApp|verifyApp|archive|signDmg|submitDmg|stapleDmg|verifyDmg|verifyZip|verifyDmgApp|cleanup); operation=[a-z-]+; reason=tool-(?:exit|execution|tree-active)(?:; status=73)?(?:; flag=-(?:L|D|l))?$/);
         assert.doesNotMatch(line, /unknown|SEEDED|SECRET-TOOL-OUTPUT|dummy-password|PRIVATE KEY/);
         for (const value of [f.root, f.temp, ...Object.values(secrets)]) assert.ok(!line.includes(value));
@@ -597,6 +602,55 @@ test('every reachable tool failure emits only fixed stage/operation/reason and b
       fs.rmSync(path.dirname(f.root), { recursive: true, force: true });
     }
   }
+});
+
+for (const verbose of ['success', 'exit', 'throw', 'active']) {
+  test(`staple diagnostics are bounded, redacted and cannot override failure (${verbose})`, async t => {
+    const logs = [];
+    t.mock.method(console, 'error', line => logs.push(line));
+    const f = fixture(t, {
+      fail(file, args) {
+        if (file !== 'xcrun' || args[1] !== 'validate') return false;
+        if (args.includes('-v')) {
+          if (verbose === 'throw') throw new Error('private diagnostic error');
+          return verbose === 'exit';
+        }
+        return true;
+      },
+      active: (file, args) => verbose === 'active' && file === 'xcrun' && args.includes('-v'),
+      stdout: target => `Processing: ${target}\nChecking ticket\n${target} does not have a ticket stapled to it.\n${secrets.MACOS_CERTIFICATE_PASSWORD}\n${secrets.APPLE_API_KEY_ID}\n/private/keychain.keychain-db\n${'x'.repeat(241)}\nLast allowed line\nNinth hidden line`,
+      stderr: 'First stderr line\n' + secrets.APPLE_API_ISSUER,
+    });
+    const unsafe = verbose === 'throw' || verbose === 'active';
+    await assert.rejects(f.execute(), { code: unsafe ? 'tool-tree-active' : 'tool-exit' });
+    const calls = f.calls.filter(c => c.file === 'xcrun' && c.args[1] === 'validate');
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].args.slice(0, 3), ['stapler', 'validate', '-v']);
+    assert.equal(calls[0].options.timeout, 120000);
+    assert.equal(calls[1].options.timeout, 120000);
+    assert.equal(calls[0].options.signal, calls[1].options.signal);
+    const log = logs.join('\n');
+    assert.match(log, /stdout\[1\]="Processing: <bundle>"/);
+    assert.match(log, /stdout\[3\]="<bundle> does not have a ticket stapled to it\."/);
+    assert.match(log, /stdout\[8\]="Last allowed line"/);
+    assert.doesNotMatch(log, /Ninth hidden line|private diagnostic error/);
+    for (const value of [f.temp, ...Object.values(secrets)]) assert.ok(!log.includes(value));
+    if (verbose === 'exit') assert.match(log, /diagnostic=verbose; stdout\[3\]=/);
+    if (verbose === 'active') assert.match(log, /reason=tool-tree-active/);
+    assert.equal(fs.existsSync(f.output), false);
+    if (!unsafe) assert.deepEqual(fs.readdirSync(f.temp), []);
+  });
+}
+
+test('successful verbose validation prints evidence without changing the failed verdict', async t => {
+  const logs = [];
+  t.mock.method(console, 'error', line => logs.push(line));
+  const f = fixture(t, { verboseOutput: 'Verbose ticket details\n' + secrets.MACOS_CERTIFICATE_PASSWORD,
+    fail: (file, args) => file === 'xcrun' && args[1] === 'validate' && !args.includes('-v') });
+  await assert.rejects(f.execute(), { code: 'tool-exit' });
+  assert.equal(f.calls.filter(c => c.file === 'xcrun' && c.args.includes('-v') && c.args[1] === 'validate').length, 1);
+  assert.ok(logs.some(line => line.endsWith('diagnostic=verbose; stdout[1]="Verbose ticket details"')));
+  assert.ok(logs.some(line => line.endsWith('diagnostic=verbose; stdout[2]=<redacted>')));
 });
 
 test('prepare and cleanup diagnostics distinguish import, restore and delete without argv', async t => {

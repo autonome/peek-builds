@@ -229,7 +229,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   let inventoryBundle;
   const inventoryTools = new Set(['file', 'lipo', 'otool', 'codesign', 'spctl']);
   // Preserve redacted bundle operands, hide all other absolute paths, and
-  // allow only bounded first-line prose. Never echo known environment values.
+  // allow only bounded per-line prose. Never echo known environment values.
   const safeReason = stderr => {
     if (typeof stderr !== 'string') return '';
     const raw = stderr.split(/\r?\n/, 1)[0];
@@ -251,7 +251,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     return first.length <= 240 && /^[A-Za-z0-9 .,:()_' -]+$/.test(prose) &&
       !Object.values(env).some(value => typeof value === 'string' && value && first.includes(value)) ? first : '';
   };
-  const call = async (file, args, opts = {}) => {
+  const call = async (file, args, { diagnostic = false, ...opts } = {}) => {
     const operation = toolOperation(file, args);
     // Capture before invoking a runner; never use arbitrary runner/error fields
     // to identify the target. Both operands are canonical bundle inventory paths.
@@ -265,6 +265,15 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
         }
       } catch { /* Diagnostic context must not change verification behavior. */ }
     }
+    const printStreams = (stderr, stdout) => {
+      for (const [stream, value] of [['stderr', stderr], ['stdout', stdout]]) {
+        if (typeof value !== 'string' || value === '') continue;
+        for (const [index, line] of value.split(/\r?\n/).slice(0, 8).entries()) {
+          const detail = safeReason(line);
+          console.error(`macOS candidate tool output: stage=${stage}; operation=${operation}${diagnostic ? '; diagnostic=verbose' : ''}; ${stream}[${index + 1}]=${detail ? JSON.stringify(detail) : '<redacted>'}`);
+        }
+      }
+    };
     const failed = (reason, status, stderr, stdout) => {
       // Numeric exit status only; never stringify arbitrary runner values.
       const exit = Number.isInteger(status) && status >= 0 && status <= 255 ? `; status=${status}` : '';
@@ -277,6 +286,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       }
       const flag = { dependencies: '-L', 'dylib-id': '-D', 'load-commands': '-l' }[operation];
       console.error(`macOS candidate tool failed: stage=${stage}; operation=${operation}; reason=${reason}${exit}${flag ? `; flag=${flag}` : ''}`);
+      if (relativeTarget !== undefined || operation === 'staple-validate') printStreams(stderr, stdout);
       block(reason);
     };
     need(operation !== 'unknown', 'tool-operation');
@@ -287,6 +297,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       timeout: 120000, ...(opts.cleanup ? {} : { signal: abort.signal }), ...opts }); } catch { unsafeTree = true; failed('tool-execution'); }
     if (result?.quiescent !== true) { unsafeTree = true; failed('tool-tree-active', undefined, result?.stderr, result?.stdout); }
     if (result.code !== 0) failed('tool-exit', result.code, result.stderr, result.stdout);
+    if (diagnostic) printStreams(result.stderr, result.stdout);
     return result;
   };
   const text = async (file, args, opts) => (await call(file, args, opts)).stdout;
@@ -313,7 +324,20 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   };
   const auth = () => ['--keychain', keychain, '--keychain-profile', 'peek-candidate'];
   const staple = async target => { await call('xcrun', ['stapler', 'staple', target]); };
-  const validateStaple = async target => { await call('xcrun', ['stapler', 'validate', target]); return true; };
+  const validateStaple = async target => {
+    try { await call('xcrun', ['stapler', 'validate', target]); }
+    catch (error) {
+      // Read-only evidence, never a second chance to pass. Use call's normal
+      // timeout, abort signal and process-tree containment; retain the original
+      // failure even if diagnostics fail. Unsafe trees still block cleanup.
+      if (error.code === 'tool-exit') {
+        try { await call('xcrun', ['stapler', 'validate', '-v', target], { diagnostic: true }); }
+        catch { /* The original validation verdict is authoritative. */ }
+      }
+      throw error;
+    }
+    return true;
+  };
   const gatekeeper = async (target, type) => {
     const result = await call('spctl', ['--assess', '--type', type,
       ...(type === 'open' ? ['--context', 'context:primary-signature'] : []), '--verbose=4', target]);
