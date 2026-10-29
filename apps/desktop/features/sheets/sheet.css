@@ -177,7 +177,10 @@ peek-card:hover .card-remove-btn {
 /* Webview inside card. Inset from the card edge so the grid's edge-resize
    and header-drag handling still receive presses there. */
 .card-webview {
-  display: block;
+  /* A webview sizes its page through an inner frame that fills it only while
+     the webview is a flex container; as a block, that frame keeps its 150px
+     default height, so the page inside never grows taller with the card. */
+  display: flex;
   width: calc(100% - 12px);
   /* Takes the card body's remaining height by flex, not by percentage: the
      body's height comes from flexing, which a percentage cannot always
