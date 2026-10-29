@@ -16,6 +16,26 @@ Folknet gateway; no Bez installation, service, script, aliases, inventory, keys,
 checkout, lanes, machines, Dagu or Forgejo dependencies. Its public model client is
 wire evidence, not a universal Folknet contract. Design §1 pins evidence and differences.
 
+## Scope of this spec: the offline broker core
+
+This spec delivers the offline broker core only. Three dependent specs carry
+the integration that needs files outside these touches, because the persistent
+install/grant identity and a synchronous preload bootstrap do not exist yet:
+
+- `folknet-models-authority.md` (A): registry-owned install identity, models
+  consent and grant revision, and token binding.
+- `folknet-models-runtime.md` (B): synchronous preload bootstrap, the exposed
+  `models` facade, broker construction in `runtime-entry.ts`, and lifecycle wiring.
+- `folknet-models-panel.md` (C): the actual trusted profile panel window.
+
+Within this spec: production `models` stays absent from `window.app`,
+`setModelIpcHost(null)` stays the production default, and `runtime-entry.ts`
+constructs no broker. The profile panel and selected-text harness are host
+controllers tested offline, not windows. Acceptance items 2, 6 and 7 below are met
+by component tests with injected owner/state/lifecycle ports; their real Electron
+counterparts belong to B and C. The milestone as a whole is complete only when
+this spec and A, B and C have all landed.
+
 ## One milestone, not a platform
 
 Deliver a fake-backed desktop profile text broker plus
