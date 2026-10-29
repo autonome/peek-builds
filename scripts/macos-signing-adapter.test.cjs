@@ -46,6 +46,10 @@ function fixture(t, mutation = {}) {
     write(path.join(framework, 'Versions/A/Example'), 'MACHO');
     fs.symlinkSync('A', path.join(framework, 'Versions/Current'));
     fs.symlinkSync('Versions/Current/Example', path.join(framework, 'Example'));
+    if (mutation.gpu) {
+      const helper = path.join(target, 'Contents/Frameworks/Peek Helper (GPU).app/Contents/MacOS/Peek Helper (GPU)');
+      write(helper, 'MACHO'); fs.chmodSync(helper, 0o755);
+    }
     if (mutation.escape) fs.symlinkSync(root, path.join(target, 'Contents/escape'));
   }
   const ok = (stdout = '', stderr = '') => ({ code: 0, stdout, stderr, quiescent: true });
@@ -58,7 +62,7 @@ function fixture(t, mutation = {}) {
       args.push('SEEDED-PRIVATE-ARGV');
       if (mutation.failureMode === 'throw') throw new Error('SEEDED-PRIVATE-ERROR ' + target);
       return { code: mutation.failureMode === 'status' ? 'SEEDED-PRIVATE-STATUS' : 73,
-        stdout: 'SECRET-TOOL-OUTPUT', stderr: typeof mutation.stderr === 'function' ? mutation.stderr(target) :
+        stdout: typeof mutation.stdout === 'function' ? mutation.stdout(target) : mutation.stdout ?? 'SECRET-TOOL-OUTPUT', stderr: typeof mutation.stderr === 'function' ? mutation.stderr(target) :
           mutation.stderr ?? secrets.MACOS_CERTIFICATE_PASSWORD,
         quiescent: mutation.failureMode !== 'active' };
     }
@@ -412,8 +416,9 @@ for (const stderr of ['truncated load command\nSECOND LINE', '/private/secret: i
     const index = logs.findIndex(line => line.startsWith('macOS candidate tool target:'));
     assert.ok(index >= 0);
     assert.equal(logs[index], 'macOS candidate tool target: "Contents/Frameworks/Example.framework/Versions/A/Example"' +
-      (stderr.startsWith('truncated') ? '; stderr="truncated load command"' : ''));
-    assert.equal(logs[index + 1], 'macOS candidate tool failed: stage=verifyApp; operation=dependencies; reason=tool-exit; status=73');
+      (stderr.startsWith('truncated') ? '; stderr="truncated load command"' :
+        stderr.startsWith('/private/') ? '; stderr="<path>: invalid"' : ''));
+    assert.equal(logs[index + 1], 'macOS candidate tool failed: stage=verifyApp; operation=dependencies; reason=tool-exit; status=73; flag=-L');
     assert.equal(fs.existsSync(f.output), false);
     assert.deepEqual(fs.readdirSync(f.temp), []);
   });
@@ -438,12 +443,45 @@ for (const kind of ['canonical', 'var alias', 'repeated', 'other path', 'adjacen
     await assert.rejects(f.execute(), { code: 'tool-exit' });
     const detail = kind === 'repeated' ? `otool: "<bundle>/${relative}" and '<bundle>/${relative}': invalid` :
       `otool: "<bundle>/${relative}": invalid`;
-    const suppressed = ['other path', 'adjacent path', 'secret', 'long'].includes(kind);
+    const suppressed = ['secret', 'long'].includes(kind);
+    const extra = { 'other path': ' <path>', 'adjacent path': ':<path>' }[kind] || '';
     assert.equal(logs.find(line => line.startsWith('macOS candidate tool target:')),
-      `macOS candidate tool target: "${relative}"` + (suppressed ? '' : `; stderr=${JSON.stringify(detail)}`));
+      `macOS candidate tool target: "${relative}"` + (suppressed ? '' : `; stderr=${JSON.stringify(detail + extra)}`));
     assert.equal(fs.existsSync(f.output), false);
     assert.deepEqual(fs.readdirSync(f.temp), []);
   });
+}
+
+for (const flag of ['-L', '-D', '-l']) {
+  for (const channel of ['stderr', 'stdout', 'secret stderr', 'secret stdout']) {
+    test(`otool ${flag} diagnoses ${channel} without tool paths or credentials`, async t => {
+      const logs = [];
+      t.mock.method(console, 'error', line => logs.push(line));
+      const relative = 'Contents/Frameworks/Peek Helper (GPU).app/Contents/MacOS/Peek Helper (GPU)';
+      const line = target => `/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/otool-classic: can't open file: ${target} (No such file or directory)\nPRIVATE SECOND LINE`;
+      const secret = channel.startsWith('secret');
+      const stdout = channel.endsWith('stdout');
+      const diagnostic = target => secret ? `can't open file ${secrets.MACOS_CERTIFICATE_PASSWORD}` : line(target);
+      const f = fixture(t, {
+        gpu: true,
+        fail: (file, args) => file === 'otool' && args[0] === flag && args.at(-1).endsWith('/' + relative),
+        stderr: stdout ? '' : diagnostic, stdout: stdout ? diagnostic : 'UNUSED STDOUT',
+      });
+      await assert.rejects(f.execute(), { code: 'tool-exit' });
+      const target = `macOS candidate tool target: "${relative}"`;
+      const detail = `<path>: can't open file: <bundle>/${relative} (No such file or directory)`;
+      assert.equal(logs.find(value => value.startsWith('macOS candidate tool target:')),
+        target + (stdout ? '; stderr=<empty>' : '') +
+        (secret ? '' : `; ${stdout ? 'stdout' : 'stderr'}=${JSON.stringify(detail)}`));
+      assert.ok(logs.some(value => value.endsWith(`; flag=${flag}`)));
+      const log = logs.join('\n');
+      for (const value of [f.temp, '/Applications/', 'PRIVATE SECOND LINE', 'UNUSED STDOUT', ...Object.values(secrets)]) {
+        assert.ok(!log.includes(value));
+      }
+      assert.equal(fs.existsSync(f.output), false);
+      assert.deepEqual(fs.readdirSync(f.temp), []);
+    });
+  }
 }
 
 test('every reachable tool failure emits only fixed stage/operation/reason and bounded numeric status', async t => {
@@ -470,7 +508,7 @@ test('every reachable tool failure emits only fixed stage/operation/reason and b
           assert.ok(!target.includes('..'));
           continue;
         }
-        assert.match(line, /^macOS candidate tool failed: stage=(?:preflight|prepare|pack|signApp|submitApp|stapleApp|verifyApp|archive|signDmg|submitDmg|stapleDmg|verifyDmg|verifyZip|verifyDmgApp|cleanup); operation=[a-z-]+; reason=tool-(?:exit|execution|tree-active)(?:; status=73)?$/);
+        assert.match(line, /^macOS candidate tool failed: stage=(?:preflight|prepare|pack|signApp|submitApp|stapleApp|verifyApp|archive|signDmg|submitDmg|stapleDmg|verifyDmg|verifyZip|verifyDmgApp|cleanup); operation=[a-z-]+; reason=tool-(?:exit|execution|tree-active)(?:; status=73)?(?:; flag=-(?:L|D|l))?$/);
         assert.doesNotMatch(line, /unknown|SEEDED|SECRET-TOOL-OUTPUT|dummy-password|PRIVATE KEY/);
         for (const value of [f.root, f.temp, ...Object.values(secrets)]) assert.ok(!line.includes(value));
         assert.equal(line.includes('status='), mode === 'exit');

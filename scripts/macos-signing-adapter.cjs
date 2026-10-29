@@ -219,9 +219,8 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
   let stage = 'idle';
   let inventoryBundle;
   const inventoryTools = new Set(['file', 'lipo', 'otool', 'codesign', 'spctl']);
-  // Only bundle-relative operands may contain slashes/quotes. After removing
-  // those operands, retain the original prose allowlist and first-line bound.
-  // Never echo known environment values remaining after bundle redaction.
+  // Preserve redacted bundle operands, hide all other absolute paths, and
+  // allow only bounded first-line prose. Never echo known environment values.
   const safeReason = stderr => {
     if (typeof stderr !== 'string') return '';
     const raw = stderr.split(/\r?\n/, 1)[0];
@@ -231,10 +230,16 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
       if (inventoryBundle.startsWith('/private/var/')) aliases.push(inventoryBundle.slice('/private'.length));
       for (const bundle of aliases) first = first.split(bundle).join('<bundle>');
     }
-    // Spaces inside bundle filenames are allowed, but not before another slash:
-    // an unrelated absolute path must remain visible to the rejecting filter.
-    const prose = first.replace(/"<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*"|'<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*'|<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*/g, 'bundle');
-    return first.length <= 240 && /^[A-Za-z0-9 .,:()_-]+$/.test(prose) &&
+    const operands = [];
+    first = first.replace(/"<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*"|'<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*'|<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*/g,
+      operand => { operands.push(operand); return `BUNDLEOPERAND${operands.length - 1}END`; });
+    // Quoted paths can contain spaces. For unquoted paths, conservatively hide
+    // through the next delimiter, even if that also removes some prose.
+    first = first.replace(/"\/[^"\r\n]*"|'\/[^'\r\n]*'|\/[^"'<>:;,\r\n]*/g, '<path>');
+    first = first.replace(/BUNDLEOPERAND(\d+)END/g, (_, index) => operands[index] || '');
+    const prose = first.replace(/"?<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*"?|'?<bundle>(?:\/[A-Za-z0-9._()-]+(?: [A-Za-z0-9._()-]+)*)*'?/g, 'bundle')
+      .replaceAll('<path>', 'path');
+    return first.length <= 240 && /^[A-Za-z0-9 .,:()_' -]+$/.test(prose) &&
       !Object.values(env).some(value => typeof value === 'string' && value && first.includes(value)) ? first : '';
   };
   const call = async (file, args, opts = {}) => {
@@ -251,14 +256,18 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
         }
       } catch { /* Diagnostic context must not change verification behavior. */ }
     }
-    const failed = (reason, status, stderr) => {
+    const failed = (reason, status, stderr, stdout) => {
       // Numeric exit status only; never stringify arbitrary runner values.
       const exit = Number.isInteger(status) && status >= 0 && status <= 255 ? `; status=${status}` : '';
       if (relativeTarget !== undefined) {
-        const detail = safeReason(stderr);
-        console.error(`macOS candidate tool target: ${JSON.stringify(relativeTarget)}${detail ? `; stderr=${JSON.stringify(detail)}` : ''}`);
+        const empty = stderr === '';
+        const detail = safeReason(empty ? stdout : stderr);
+        const diagnostic = empty ? `; stderr=<empty>${detail ? `; stdout=${JSON.stringify(detail)}` : ''}` :
+          (detail ? `; stderr=${JSON.stringify(detail)}` : '');
+        console.error(`macOS candidate tool target: ${JSON.stringify(relativeTarget)}${diagnostic}`);
       }
-      console.error(`macOS candidate tool failed: stage=${stage}; operation=${operation}; reason=${reason}${exit}`);
+      const flag = { dependencies: '-L', 'dylib-id': '-D', 'load-commands': '-l' }[operation];
+      console.error(`macOS candidate tool failed: stage=${stage}; operation=${operation}; reason=${reason}${exit}${flag ? `; flag=${flag}` : ''}`);
       block(reason);
     };
     need(operation !== 'unknown', 'tool-operation');
@@ -267,8 +276,8 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     let result;
     try { result = await run(file, args, { cwd: root, env: childEnv,
       timeout: 120000, ...(opts.cleanup ? {} : { signal: abort.signal }), ...opts }); } catch { unsafeTree = true; failed('tool-execution'); }
-    if (result?.quiescent !== true) { unsafeTree = true; failed('tool-tree-active', undefined, result?.stderr); }
-    if (result.code !== 0) failed('tool-exit', result.code, result.stderr);
+    if (result?.quiescent !== true) { unsafeTree = true; failed('tool-tree-active', undefined, result?.stderr, result?.stdout); }
+    if (result.code !== 0) failed('tool-exit', result.code, result.stderr, result.stdout);
     return result;
   };
   const text = async (file, args, opts) => (await call(file, args, opts)).stdout;
