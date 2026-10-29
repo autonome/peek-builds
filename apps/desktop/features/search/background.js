@@ -14,6 +14,12 @@ const baseAddress = 'peek://search/home.html';
 // Typing only `#tags` and pressing Enter searches by those tags: every token is `#name`.
 const HASHTAG_QUERY_CLAIM = { tokenPattern: '^#[^\\s#]+$' };
 
+// One `cmd:execute:search` publish reaches both the registered command and the
+// subscribe below, and the first window open wins, so both read the query the
+// same way: `text` or `data.query` from other tiles, `search` from the panel.
+const queryFrom = (msg) => msg?.text || msg?.search || msg?.query
+  || msg?.data?.query || msg?.data?.text || msg?.data?.search || '';
+
 let isOpeningSearch = false;
 
 const openSearchWindow = async (query) => {
@@ -48,15 +54,13 @@ const init = async () => {
     description: 'Search items by text and tags',
     claimsInput: HASHTAG_QUERY_CLAIM,
     execute: async (params) => {
-      const query = params?.text || params?.search || '';
-      openSearchWindow(query);
+      openSearchWindow(queryFrom(params));
     }
   });
 
   // Listen for search requests from cmd palette
   api.pubsub.subscribe('cmd:execute:search', (msg) => {
-    const query = msg?.data?.query || msg?.data?.text || '';
-    openSearchWindow(query);
+    openSearchWindow(queryFrom(msg));
   });
 };
 
