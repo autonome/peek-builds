@@ -29,6 +29,7 @@ import {
   findChainingCommands,
   buildExecutionContext,
   getTabCycleIndex,
+  trimUrlOnlyInput,
   getAdaptiveScore,
   getFrecencyScore,
   updateAdaptiveFeedback as applyAdaptiveFeedback,
@@ -3003,7 +3004,14 @@ async function render() {
 
   // Input event -> dispatch to state machine (or filter URL mode)
   commandInput.addEventListener('input', (e) => {
-    const value = commandInput.value;
+    // A pasted URL with stray surrounding whitespace is trimmed here, once, so
+    // matching, completion and open all see the bare URL.
+    const rawValue = commandInput.value;
+    const value = trimUrlOnlyInput(rawValue, (s) => getValidURL(s).valid);
+    if (value !== rawValue) {
+      commandInput.value = value;
+      commandInput.setSelectionRange(value.length, value.length);
+    }
     const trimmedText = value.trim();
     // A deletion (Backspace/Delete/cut) — used to reject the selected ghost
     // suffix without re-arming it. inputType is absent on programmatic .value

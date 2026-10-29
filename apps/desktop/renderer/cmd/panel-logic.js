@@ -11,6 +11,21 @@
  * No imports: this module must stay loadable on its own.
  */
 
+// ===== Input Normalisation =====
+
+/**
+ * The text the panel should treat as typed. When the input, ignoring leading and
+ * trailing whitespace, is exactly one URL (a single word the caller's `isUrl`
+ * accepts), that trimmed URL; otherwise the input unchanged, so a trailing space
+ * after a command name or a URL among other words is preserved.
+ */
+export function trimUrlOnlyInput(value, isUrl) {
+  if (!value) return value;
+  const trimmed = value.trim();
+  if (trimmed === value || /\s/.test(trimmed)) return value;
+  return isUrl(trimmed) ? trimmed : value;
+}
+
 // ===== Chain Mode =====
 
 /**
