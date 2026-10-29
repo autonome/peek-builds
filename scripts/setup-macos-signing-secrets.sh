@@ -70,7 +70,7 @@ preflight() {
   # Delete before confirmation/upload, so cleanup failure also blocks uploads.
   security delete-keychain "$preflight_keychain" >/dev/null 2>&1 || fail 'Cannot delete the temporary preflight keychain. Nothing uploaded.'
   preflight_keychain=''
-  rm -rf "$preflight_dir"
+  rm -rf "$preflight_dir" || fail 'Cannot remove preflight scratch. Nothing uploaded.'
   preflight_dir=''
   printf '%s\n' 'Local P12 import and exact codesigning identity verified.'
 }
