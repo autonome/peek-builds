@@ -8,7 +8,6 @@
 import { loadSheet, saveSheet, loadSheetsMap, deleteSheet } from './sheet-store.js';
 import { withSheetName } from './sheet-commands.js';
 import { startNameEdit, isNameEditing } from './inline-name-edit.js';
-import { createGhostCard } from 'peek://app/lib/ghost-card.js';
 import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
 import {
   acceleratorFromKeyEvent, resolveSheetHotkey, withSheetHotkey, findHotkeyConflict,
@@ -94,7 +93,6 @@ const createCard = (item) => {
   return card;
 };
 
-const GHOST_ID = 'ghost-add';
 const SLOT_COLS = 3;
 const SLOT_W = DEFAULT_CARD_WIDTH;
 const SLOT_H = DEFAULT_CARD_HEIGHT;
@@ -134,12 +132,7 @@ const renderCards = () => {
     grid.appendChild(card);
   }
 
-  // The "+" card sits in the next free slot, after the last card. It needs an
-  // id for the freeform layout to place it; the grid never drags it.
-  const ghost = createGhostCard({ title: 'Add card', onClick: showAddDialog });
-  ghost.id = GHOST_ID;
-  grid.appendChild(ghost);
-  layout[GHOST_ID] = slotFor(items.length);
+  document.querySelector('.empty-state').style.display = items.length ? 'none' : '';
 
   // Set freeform layout on grid
   grid.freeformLayout = layout;
@@ -224,6 +217,7 @@ const confirmAddDialog = () => {
  */
 const setupEvents = () => {
   // Add dialog
+  document.querySelector('.btn-add').addEventListener('click', showAddDialog);
   document.querySelector('.add-dialog-backdrop').addEventListener('click', hideAddDialog);
   document.querySelector('.btn-cancel').addEventListener('click', hideAddDialog);
   document.querySelector('.btn-confirm').addEventListener('click', confirmAddDialog);
