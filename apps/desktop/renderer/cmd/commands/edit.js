@@ -14,6 +14,7 @@
 import api from 'peek://app/api.js';
 import { findTagByName } from '../item-suggestions.js';
 import { parseTagQuery, intersectItems } from '../tag-query.js';
+import { tagQueryRow } from '../tag-query-row.js';
 
 /**
  * Search notes by content
@@ -67,7 +68,15 @@ const commands = [
     // Accept search text, produce item (note object)
     accepts: ['text'],
     produces: ['item'],
-    params: [{ type: 'item', itemType: 'text' }],
+    params: [{
+      type: 'item',
+      itemType: 'text',
+      // `edit #todo`: a first row that runs the command with the typed text (the tag query view)
+      extraRows: async (typedText, ctx) => {
+        const row = await tagQueryRow({ type: 'item' }, typedText, ctx.datastore);
+        return row ? [row] : [];
+      },
+    }],
 
     async execute(ctx) {
       // `edit #todo #today`: every argument is a #tag, so open the tag query view

@@ -14,7 +14,7 @@ import { getSuggestions, limitShown, invalidateCache as invalidateCompleterCache
 import { commandTextWithSuggestion, paramFilterText } from './param-fill.js';
 import { recordPick, recordSuggestionPick, rankByUsage, pickedSuggestion } from './usage-rank.js';
 import { noMatchRow } from './no-match.js';
-import { tagQueryRow } from './tag-query-row.js';
+import { extraParamRows, prependRows } from './param-rows.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { editorMessageForOutput } from './note-notice.js';
@@ -593,10 +593,10 @@ async function doUpdateParamSuggestions() {
 
   if (generation !== state.paramGeneration) return;
 
-  // `edit #todo`: a first row that runs the command with the typed text (the tag query view)
-  const tagRow = await tagQueryRow(paramDef, [...completedTokens, partial].join(' '), api.datastore);
+  // Rows the command's param def puts above the normal suggestions
+  const extraRows = await extraParamRows(paramDef, [...completedTokens, partial].join(' '), { datastore: api.datastore });
   if (generation !== state.paramGeneration) return;
-  const suggestions = tagRow ? [tagRow, ...itemSuggestions] : itemSuggestions;
+  const suggestions = prependRows(extraRows, itemSuggestions);
 
   state.paramSuggestions = suggestions;
   state.paramIndex = suggestions.length > 0 ? 0 : -1;
