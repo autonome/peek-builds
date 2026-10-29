@@ -1,7 +1,7 @@
 # Session-local track notifications
 
 A project-local Pi extension for the coordinator in this checkout. It watches only
-the four targets in `.pi/track-monitor.json` and the latest GitHub macOS candidate
+the targets in `.pi/track-monitor.json` and the latest GitHub macOS candidate
 workflow run. It does not start writers, land/push changes, dispatch builds, change
 authentication, or authorize anything the coordinator was not already allowed to do.
 It is coordination tooling, not a Peek runtime component.
@@ -25,6 +25,8 @@ Commands:
 - `/track-monitor status`: display cached observations without calling the model.
 - `/track-monitor off`: stop; remains off across reloads in this session branch.
 - `/track-monitor on`: resume; uses the saved report checkpoint to avoid duplicates.
+  The watchlist is read at startup: after editing `.pi/track-monitor.json`, reload Pi
+  or turn the monitor off and on to pick up new targets.
 - `/track-monitor test`: one clearly labelled synthetic wake-up, not a status claim.
 
 Monitoring stops at session shutdown/reload, restart, or process exit. It runs only
