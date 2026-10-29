@@ -98,6 +98,23 @@ const createCard = (item) => {
   return card;
 };
 
+/** Images pasted or dropped that are still being encoded: {id, x, y, w, h, file}. */
+const pendingCards = [];
+
+/** Spinner card standing in for an image until it is encoded. data-ghost keeps the grid from dragging it. */
+const createPendingCard = (id) => {
+  const card = document.createElement('peek-card');
+  card.id = id;
+  card.dataset.id = id;
+  card.dataset.ghost = '';
+  card.className = 'pending-card';
+  card.draggable = false;
+  const spinner = document.createElement('div');
+  spinner.className = 'pending-spinner';
+  card.appendChild(spinner);
+  return card;
+};
+
 const SLOT_COLS = 3;
 const SLOT_W = DEFAULT_CARD_WIDTH;
 const SLOT_H = DEFAULT_CARD_HEIGHT;
@@ -137,7 +154,13 @@ const renderCards = () => {
     grid.appendChild(card);
   }
 
-  document.querySelector('.empty-state').style.display = items.length ? 'none' : '';
+  // Images still being encoded show as placeholders; they are not part of the saved sheet.
+  for (const job of pendingCards) {
+    layout[job.id] = { x: job.x, y: job.y, w: job.w, h: job.h };
+    grid.appendChild(createPendingCard(job.id));
+  }
+
+  document.querySelector('.empty-state').style.display = (items.length || pendingCards.length) ? 'none' : '';
 
   // Set freeform layout on grid
   grid.freeformLayout = layout;
@@ -417,6 +440,23 @@ const encodeBackgroundImage = async (file) => {
   return url;
 };
 
+const IMAGE_ENCODE_CONCURRENCY = 3;
+
+/** Natural pixel size of an image file, read from its header without re-encoding. */
+const readImageSize = (file) => new Promise((resolve, reject) => {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    resolve({ width: img.naturalWidth, height: img.naturalHeight });
+  };
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+    reject(new Error('image could not be read'));
+  };
+  img.src = url;
+});
+
 /**
  * Add one image card per dropped or pasted image file. The first card is
  * centred on the point (relative to the grid); the rest follow it left to right,
@@ -425,32 +465,53 @@ const encodeBackgroundImage = async (file) => {
  */
 const addImageCards = async (files, point) => {
   const grid = document.querySelector('peek-grid.cards');
-  const encoded = [];
-  for (const file of files) {
-    try {
-      encoded.push(await encodeImageWithin(file, CARD_IMAGE_MAX_SIDE, CARD_IMAGE_MAX_SIDE));
-    } catch (err) {
-      console.error('[sheets] Failed to encode image:', err);
-    }
-  }
-  if (!encoded.length) return;
-  const first = imageCardBounds(point, encoded[0], grid.freeformSnap);
-  const sizes = encoded.map((img) => {
-    const b = imageCardBounds(point, img, grid.freeformSnap);
+  // Natural sizes first (a header read, no re-encode) so the final layout is known up front.
+  const naturals = await Promise.all(files.map((file) => readImageSize(file).catch((err) => {
+    console.error('[sheets] Failed to read image:', err);
+    return null;
+  })));
+  const sized = files.map((file, i) => ({ file, natural: naturals[i] })).filter((s) => s.natural);
+  if (!sized.length) return;
+  const first = imageCardBounds(point, sized[0].natural, grid.freeformSnap);
+  const sizes = sized.map((s) => {
+    const b = imageCardBounds(point, s.natural, grid.freeformSnap);
     return { w: b.w, h: b.h };
   });
   const rects = fitCardsInView(sizes, gridBounds(grid), grid.gap, { x: first.x, y: first.y }, grid.freeformSnap);
-  encoded.forEach((img, i) => {
-    sheetConfig.items.push({
-      id: crypto.randomUUID().slice(0, 8),
-      kind: 'image',
-      image: img.url,
-      x: rects[i].x,
-      y: rects[i].y,
-      width: rects[i].w,
-      height: rects[i].h
-    });
+
+  // Placeholders appear at once at their final positions; they are never saved.
+  const jobs = sized.map((s, i) => {
+    const job = { id: crypto.randomUUID().slice(0, 8), file: s.file, x: rects[i].x, y: rects[i].y, w: rects[i].w, h: rects[i].h };
+    pendingCards.push(job);
+    return job;
   });
+  renderCards();
+
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      try {
+        const img = await encodeImageWithin(job.file, CARD_IMAGE_MAX_SIDE, CARD_IMAGE_MAX_SIDE);
+        pendingCards.splice(pendingCards.indexOf(job), 1);
+        // Another card may have been pushed aside meanwhile; keep the placeholder's current spot.
+        const bounds = grid.freeformLayout?.[job.id] || { x: job.x, y: job.y, w: job.w, h: job.h };
+        const item = {
+          id: job.id, kind: 'image', image: img.url,
+          x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h
+        };
+        sheetConfig.items.push(item);
+        const placeholder = grid.querySelector(`peek-card[data-id="${job.id}"]`);
+        if (placeholder) placeholder.replaceWith(createCard(item));
+        else renderCards();
+      } catch (err) {
+        console.error('[sheets] Failed to encode image:', err);
+        pendingCards.splice(pendingCards.indexOf(job), 1);
+        grid.querySelector(`peek-card[data-id="${job.id}"]`)?.remove();
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(IMAGE_ENCODE_CONCURRENCY, jobs.length) }, worker));
   await saveSheetConfig();
   renderCards();
   updateEditState();
