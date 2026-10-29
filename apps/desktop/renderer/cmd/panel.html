@@ -259,6 +259,23 @@
       .url-open-marker:hover {
         background: rgba(0, 122, 255, 0.3);
       }
+      /* Every row kind: the marker sits at the row's far right end. Command rows
+         are block layout (badges float right), so a row with a marker becomes a
+         flex row; the badges then sit just before the marker. */
+      .command-item:has(> .url-open-marker) {
+        display: flex;
+        align-items: center;
+      }
+      .url-open-marker {
+        margin-left: auto;
+      }
+      .command-item:has(> .url-open-marker) > .cmd-badges {
+        float: none;
+        margin-left: auto;
+      }
+      .cmd-badges + .url-open-marker {
+        margin-left: 8px;
+      }
 
       /* URL results separator in normal cmd mode */
       .url-results-separator {

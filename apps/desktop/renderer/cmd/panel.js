@@ -18,7 +18,7 @@ import { extraParamRows, prependRows } from './param-rows.js';
 import { findClaimingCommand } from './input-claims.js';
 import { commandOpenUrls } from './open-window-commands.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
-import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
+import { createStateMachine, States, Events, resultsListOpen, selectedRow, commandRowAutoSelect } from './state-machine.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
 // The panel's pure computations. `updateAdaptiveFeedback` is aliased because the
 // panel keeps a same-named wrapper that also logs and persists the result.
@@ -1608,18 +1608,19 @@ function isSwitchableUrl(url) {
 }
 
 /**
- * The web address the panel is holding, in the order plain Enter would pick
- * among them: a highlighted url-history row after arrowing into the list, the
- * shown inline completion when the typed text is no address itself, the typed
- * address, then an auto-selected url-history row. Null when there is none.
+ * The address of the thing plain Enter would act on right now, in the order
+ * Enter picks among them: the row highlighted after arrowing into the list
+ * (a command's `opensUrl` or a Visited page), the shown inline completion when
+ * the typed text is no address itself, the typed address, then an auto-selected
+ * row (Visited page or the command Enter would run). Null when that thing has
+ * no address. The input-bar button and the row markers both read addresses
+ * through rowAddress() / openWindowIdFor().
  */
 function currentActionUrl() {
   const fsmState = machine.getState();
+  if (fsmState === States.CHAIN_MODE) return null;
   const row = selectedRow(fsmState, state);
-  const rowUrl = (row !== null && row >= state.matches.length)
-    ? (state.urlMatches[row - state.matches.length]?.content || null)
-    : null;
-  if (fsmState === States.RESULTS_OPEN && rowUrl) return rowUrl;
+  if (fsmState === States.RESULTS_OPEN && row !== null) return rowAddress(row);
   const typed = (state.typed || '').trim();
   const urlResult = getValidURL(typed);
   if (!urlResult.valid && state.matches.length === 0 && urlGhostSuggestion) {
@@ -1629,7 +1630,11 @@ function currentActionUrl() {
     }
   }
   if (urlResult.valid) return urlResult.url;
-  return rowUrl;
+  if (row !== null) return rowAddress(row);
+  // A fully-typed command runs with the list closed: no row is highlighted, but
+  // Enter still runs the top command.
+  const hit = commandRowAutoSelect(state);
+  return hit ? rowAddress(hit.row) : null;
 }
 
 // Which of the panel's addresses are open in a window: url → window id, or
@@ -1677,9 +1682,9 @@ function rowAddress(row) {
 // "Switch to this tab"). Clicking it switches to the window; picking the row
 // itself does the row's usual thing. Rows carry their address in `data-url`.
 function renderRowMarker(el, url) {
-  const id = openWindowIds.get(url);
+  const id = openWindowIdFor(url);
   const existing = el.querySelector('.url-open-marker');
-  if (typeof id === 'number') {
+  if (id !== null) {
     el.dataset.openWindowId = String(id);
     if (!existing) {
       const marker = document.createElement('span');
@@ -1703,8 +1708,8 @@ function renderRowMarker(el, url) {
 // address has an answer it counts as not open, so the button stays hidden.
 function applyOpenWindows() {
   const url = currentActionUrl();
-  const id = isSwitchableUrl(url) ? openWindowIds.get(url) : undefined;
-  urlAction = typeof id === 'number' ? { url, action: 'switch', id } : null;
+  const id = openWindowIdFor(url);
+  urlAction = id !== null ? { url, action: 'switch', id } : null;
   renderUrlAction();
   document.querySelectorAll('#results [data-url]').forEach((el) => {
     renderRowMarker(el, el.dataset.url);
@@ -1720,7 +1725,7 @@ function shownSwitchableUrls() {
     for (const item of state.urlMatches || []) {
       if (isSwitchableUrl(item?.content)) urls.add(item.content);
     }
-    // Commands that open a window: asked about so Enter can switch to it.
+    // Commands that open a window: asked about so their markers can show.
     for (const url of commandOpenUrls(state.commands, state.matches)) {
       if (isSwitchableUrl(url)) urls.add(url);
     }
@@ -2789,12 +2794,6 @@ function actionHandlers() {
       const url = (urlGhostGranularity === 'full' || !completion)
         ? urlGhostSuggestion.url
         : withDefaultScheme(completion);
-      // The completed address is open in a window (the URL action button says
-      // "switch"): go to that window instead of opening another.
-      if (typeof openWindowIds.get(url) === 'number') {
-        runUrlAction(url, 'url-ghost');
-        return;
-      }
       log('cmd:panel', 'Opening URL ghost suggestion:', url);
       state.lastExecuted = url;
       updateMatchCount(url);
@@ -3166,24 +3165,13 @@ async function render() {
       return;
     }
 
-    // Cmd+Enter: switch to the window showing the panel's address when one is
-    // open (the "Switch to" button is up); otherwise it is plain Enter.
+    // Cmd+Enter: switch to the window showing the address Enter would act on
+    // when one is open (the "Switch to" button is up); otherwise it is plain Enter.
     const cmdEnter = e.key === 'Enter' && e.metaKey && !e.altKey && !e.ctrlKey;
     if (cmdEnter && urlAction && urlAction.url === currentActionUrl()) {
       e.preventDefault();
       machine.dispatch(Events.URL_ACTION, { url: urlAction.url });
       return;
-    }
-
-    // Cmd+Enter on the highlighted row (command or Visited) whose address is open
-    // in a window: switch to it.
-    if (cmdEnter) {
-      const rowUrl = rowAddress(selectedRow(machine.getState(), state));
-      if (openWindowIdFor(rowUrl) !== null) {
-        e.preventDefault();
-        machine.dispatch(Events.URL_ACTION, { url: rowUrl });
-        return;
-      }
     }
 
     if (e.key === 'Enter' && (cmdEnter || !hasModifier(e))) {

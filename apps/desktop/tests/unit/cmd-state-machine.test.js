@@ -1539,6 +1539,37 @@ describe('TYPING + Enter on input a command claims', () => {
   });
 });
 
+// ===== Typed address whose window is already open =====
+
+describe('a typed address whose window is open', () => {
+  function addressMachine(state) {
+    const machine = makeMachine();
+    machine.setState(state);
+    machine.getMutableData().typed = 'example.com';
+    machine._actionLog.length = 0;
+    return machine;
+  }
+
+  for (const state of [States.TYPING, States.RESULTS_OPEN]) {
+    it(`plain Enter in ${state} opens the page, never switches`, () => {
+      const machine = addressMachine(state);
+      machine.dispatch(Events.ENTER, { value: 'example.com', isURL: true, url: 'https://example.com/' });
+
+      assert.ok(machine._actionLog.includes('openURL'));
+      assert.ok(!machine._actionLog.includes('runUrlAction'));
+    });
+  }
+
+  it('the input-bar button or Cmd+Enter (URL_ACTION) switches to the window', () => {
+    const machine = addressMachine(States.TYPING);
+    machine.dispatch(Events.URL_ACTION, { url: 'https://example.com/' });
+
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.ok(machine._actionLog.includes('runUrlAction'));
+    assert.ok(!machine._actionLog.includes('openURL'));
+  });
+});
+
 // ===== Command whose window is already open =====
 
 describe('a command row whose window is open', () => {

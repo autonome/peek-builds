@@ -46,7 +46,7 @@ export function resultsListOpen(currentState, data) {
  * completion: a substring/fuzzy match at that row is selected too.
  * @returns {{row: number, reason: string}|null}
  */
-function commandRowAutoSelect(data) {
+export function commandRowAutoSelect(data) {
   if (data.matches.length === 0) return null;
   // Normally 0 (computeMatches resets matchIndex on every INPUT), but Tab-cycling
   // in TYPING moves it — the selected row must follow, or Enter would run a
