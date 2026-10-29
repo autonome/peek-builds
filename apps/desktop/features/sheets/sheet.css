@@ -83,11 +83,24 @@ body.see-through .add-dialog-input {
   padding: 16px 24px;
 }
 
+/* The title sits on its own box so it stays readable over any sheet
+   background, including a busy image or the frosted look. */
 .sheet-title {
   font-size: 18px;
   font-weight: 600;
   color: var(--base05);
   cursor: text;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: var(--base01);
+  border: 1px solid var(--base02);
+}
+
+/* The frosted look turns --base01 translucent, so the title box gets a dark
+   fill of its own that the light ink reads on. */
+body.see-through .sheet-title {
+  background: rgba(0, 0, 0, 0.55);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .sheet-actions {
