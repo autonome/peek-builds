@@ -66,6 +66,26 @@ body.see-through .card-delete-btn:hover {
   min-height: var(--card-default-height, 200px);
 }
 
+/* A card with an image stays at the default height: the image takes the
+   space the title and meta leave, cropped from the top. */
+.cards > peek-card:has(> .card-image)::part(card) {
+  height: var(--card-default-height, 200px);
+}
+
+.cards > peek-card:has(> .card-image)::part(media) {
+  flex: 100 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.card-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+
 .card-header-row {
   display: flex;
   align-items: center;

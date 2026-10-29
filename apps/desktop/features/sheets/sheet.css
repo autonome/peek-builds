@@ -155,6 +155,7 @@ body.see-through .sheet-title {
   background: var(--base00, #1e1e1e);
   border: 1px solid var(--base03, #666);
   border-radius: 4px;
+  outline: none;
 }
 
 .draw-outline {
