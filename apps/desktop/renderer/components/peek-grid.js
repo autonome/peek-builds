@@ -44,6 +44,8 @@
  * @prop {boolean} freeformEditing - Toggle edit mode for freeform layout
  * @prop {number} freeformSnap - Snap grid in px (default 20, 0 = off)
  * @prop {boolean} pushCards - Freeform drag/resize pushes overlapped cards away (Panorama-style, within the visible area) (default false)
+ * @prop {number} edgeSize - Width in px of the side bands that resize a card in freeform edit mode (default 8)
+ * @prop {number} cornerSize - Size in px of the corner zones that resize a card; 0 uses edgeSize (default 0)
  *
  * @slot - Default slot for grid items (slotted-children path)
  *
@@ -83,7 +85,9 @@ export class PeekGrid extends PeekElement {
     freeformLayout: { type: Object, attribute: false },
     freeformEditing: { type: Boolean, attribute: 'freeform-editing', reflect: true },
     freeformSnap: { type: Number, attribute: 'freeform-snap' },
-    pushCards: { type: Boolean, attribute: 'push-cards' }
+    pushCards: { type: Boolean, attribute: 'push-cards' },
+    edgeSize: { type: Number, attribute: 'edge-size' },
+    cornerSize: { type: Number, attribute: 'corner-size' }
   };
 
   static styles = [
@@ -261,6 +265,8 @@ export class PeekGrid extends PeekElement {
     this.freeformLayout = {};
     this.freeformEditing = false;
     this.freeformSnap = 20;
+    this.edgeSize = 8;
+    this.cornerSize = 0;
     this._resizeObserver = null;
     this._dragState = null;
     this._boundPointerMove = this._onPointerMove.bind(this);
@@ -879,7 +885,8 @@ export class PeekGrid extends PeekElement {
 
   _detectEdge(el, e) {
     const rect = el.getBoundingClientRect();
-    const t = 8; // threshold px
+    const t = this.edgeSize; // side band px
+    const c = this.cornerSize || t; // corner zone px
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const w = rect.width;
@@ -890,10 +897,17 @@ export class PeekGrid extends PeekElement {
     const nearTop = y < t;
     const nearBottom = y > h - t;
 
-    if (nearTop && nearLeft) return 'nw';
-    if (nearTop && nearRight) return 'ne';
-    if (nearBottom && nearLeft) return 'sw';
-    if (nearBottom && nearRight) return 'se';
+    // Corners are a larger square than the side bands so a thin frame still
+    // has a usable resize handle at each corner.
+    const cornerLeft = x < c;
+    const cornerRight = x > w - c;
+    const cornerTop = y < c;
+    const cornerBottom = y > h - c;
+
+    if (cornerTop && cornerLeft) return 'nw';
+    if (cornerTop && cornerRight) return 'ne';
+    if (cornerBottom && cornerLeft) return 'sw';
+    if (cornerBottom && cornerRight) return 'se';
     if (nearLeft) return 'w';
     if (nearRight) return 'e';
     if (nearTop) return 'n';

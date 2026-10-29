@@ -56,20 +56,7 @@ const createCard = (item) => {
   card.id = item.id;
   card.dataset.id = item.id;
 
-  // Header with URL title and remove button
-  const header = document.createElement('div');
-  header.className = 'card-header';
-  header.slot = 'header';
-
-  const title = document.createElement('span');
-  title.className = 'card-header-title';
-  try {
-    title.textContent = new URL(item.url).hostname || item.url;
-  } catch {
-    title.textContent = item.url;
-  }
-  header.appendChild(title);
-
+  // Remove button floats over the card's top-right corner, shown on hover
   const removeBtn = document.createElement('button');
   removeBtn.className = 'card-remove-btn';
   removeBtn.textContent = '\u00d7';
@@ -80,9 +67,7 @@ const createCard = (item) => {
     e.stopPropagation();
     removeCard(item.id);
   });
-  header.appendChild(removeBtn);
-
-  card.appendChild(header);
+  card.appendChild(removeBtn);
 
   // Webview
   const webview = document.createElement('webview');
