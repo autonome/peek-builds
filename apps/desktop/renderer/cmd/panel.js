@@ -17,7 +17,6 @@ import { noMatchRow } from './no-match.js';
 import { extraParamRows, prependRows } from './param-rows.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
-import { editorMessageForOutput } from './note-notice.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
 // The panel's pure computations. `updateAdaptiveFeedback` is aliased because the
 // panel keeps a same-named wrapper that also logs and persists the result.
@@ -2902,14 +2901,11 @@ function actionHandlers() {
       doChainUndo();
     },
 
-    publishEditorOpen(payload) {
-      const result = payload?.result;
-      if (!result || !result.output) return;
-      const message = editorMessageForOutput(result.output);
-      if (!message) return;
-      api.publish(message.topic, message.payload);
-      if (message.alsoChanged) {
-        api.publish(message.alsoChanged.topic, message.alsoChanged.payload);
+    publishOutput(payload) {
+      const publish = payload?.result?.output?.publish;
+      if (!Array.isArray(publish)) return;
+      for (const message of publish) {
+        api.publish(message.topic, message.payload);
       }
     },
 

@@ -346,8 +346,11 @@ const commandDefinitions = [
           output: {
             data: { id: itemId, type: 'text', content },
             mimeType: 'item',
-            title: 'Saved note',
-            isNew: true
+            publish: [
+              { topic: 'editor:open', payload: { itemId } },
+              { topic: 'editor:changed', payload: { action: 'add', itemId } }
+            ],
+            title: 'Saved note'
           }
         };
       } catch (err) {

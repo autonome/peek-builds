@@ -985,20 +985,44 @@ describe('EXECUTING transitions', () => {
     assert.equal(machine.getState(), States.CLOSING);
   });
 
-  it('EXECUTING + command_complete (item output, single) -> CLOSING', () => {
+  it('EXECUTING + command_complete (output with publish entries) -> CLOSING', () => {
     machine.dispatch(Events.COMMAND_COMPLETE, {
-      result: { output: { data: { id: '123' }, mimeType: 'item' } },
+      result: { output: {
+        data: { id: '123' },
+        mimeType: 'item',
+        publish: [{ topic: 'editor:open', payload: { itemId: '123' } }]
+      } },
       name: 'edit'
     });
     assert.equal(machine.getState(), States.CLOSING);
   });
 
-  it('EXECUTING + command_complete (tag-query output) -> CLOSING, skipping output selection', () => {
+  it('EXECUTING + command_complete (publish with object data) -> CLOSING, skipping output selection', () => {
     machine.dispatch(Events.COMMAND_COMPLETE, {
-      result: { output: { data: { tags: ['todo'], itemIds: ['1', '2'], unknownTags: [] }, mimeType: 'tag-query' } },
+      result: { output: {
+        data: { tags: ['todo'] },
+        mimeType: 'tag-query',
+        publish: [{ topic: 'editor:open', payload: { tags: ['todo'] } }]
+      } },
       name: 'edit'
     });
     assert.equal(machine.getState(), States.CLOSING);
+  });
+
+  it('EXECUTING + command_complete (item output without publish) does not close', () => {
+    machine.dispatch(Events.COMMAND_COMPLETE, {
+      result: { output: { data: { id: '123' }, mimeType: 'item' } },
+      name: 'edit'
+    });
+    assert.notEqual(machine.getState(), States.CLOSING);
+  });
+
+  it('EXECUTING + command_complete (empty publish list) does not close', () => {
+    machine.dispatch(Events.COMMAND_COMPLETE, {
+      result: { output: { data: { tags: ['todo'] }, mimeType: 'tag-query', publish: [] } },
+      name: 'edit'
+    });
+    assert.notEqual(machine.getState(), States.CLOSING);
   });
 
   it('EXECUTING + command_complete (item output, array) -> OUTPUT_SELECTION', () => {

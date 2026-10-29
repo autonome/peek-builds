@@ -11,6 +11,7 @@
 import api from 'peek://app/api.js';
 import { splitTrailingTags, parseTagset, detectType } from 'peek://app/lib/note-tags.js';
 import { noteSavedNotice } from '../note-notice.js';
+import { openNewItemMessages } from './editor-publish.js';
 
 const NOTE_TAGS = ['note', 'from:cmd'];
 
@@ -201,6 +202,7 @@ const commands = [
           output: {
             data: { type: 'text' },
             mimeType: 'new-item',
+            publish: openNewItemMessages({ type: 'text' }),
             title: 'New note'
           }
         };

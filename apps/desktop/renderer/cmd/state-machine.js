@@ -293,10 +293,10 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
       const d = payload?.result?.output?.data;
       return Array.isArray(d) && d.length > 0;
     },
-    isEditorMimeType: (payload) => {
-      const mt = payload?.result?.output?.mimeType;
-      // 'tag-query' carries an object, never an array, so it skips output selection
-      return mt === 'item' || mt === 'new-item' || mt === 'tag-query';
+    // The command named messages to publish; it skips output selection
+    outputPublishes: (payload) => {
+      const publish = payload?.result?.output?.publish;
+      return Array.isArray(publish) && publish.length > 0;
     },
     isNotExecuting: () => currentState !== States.EXECUTING,
     inputEmpty: (payload) => !payload?.value || payload.value.trim().length === 0,
@@ -731,14 +731,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null, onC
           actions: ['hideSpinner'],
         },
         {
-          guard: (p) => guard('isEditorMimeType', p) && guard('isArrayOutput', p),
-          target: States.OUTPUT_SELECTION,
-          actions: ['hideSpinner', 'enterOutputSelection'],
-        },
-        {
-          guard: (p) => guard('isEditorMimeType', p),
+          guard: 'outputPublishes',
           target: States.CLOSING,
-          actions: ['hideSpinner', 'publishEditorOpen', 'shutdown'],
+          actions: ['hideSpinner', 'publishOutput', 'shutdown'],
         },
         {
           // Array output always enters OUTPUT_SELECTION first. From there the

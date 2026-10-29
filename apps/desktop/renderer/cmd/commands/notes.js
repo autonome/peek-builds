@@ -15,6 +15,7 @@
  */
 import api from 'peek://app/api.js';
 import { queryItemsByType, extractTitle } from './item-query.js';
+import { openItemMessages, openNewItemMessages } from './editor-publish.js';
 
 /**
  * Shared execute handler for notes queries
@@ -68,8 +69,8 @@ async function executeNewNote(ctx) {
       output: {
         data: { id: itemId, type: 'text', content: ctx.search },
         mimeType: 'item',
-        title: 'New note',
-        isNew: true
+        publish: openItemMessages(itemId, { isNew: true }),
+        title: 'New note'
       }
     };
   }
@@ -81,6 +82,7 @@ async function executeNewNote(ctx) {
     output: {
       data: { type: 'text' },
       mimeType: 'new-item',
+      publish: openNewItemMessages({ type: 'text' }),
       title: 'New note'
     }
   };

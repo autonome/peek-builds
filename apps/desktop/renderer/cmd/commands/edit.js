@@ -15,6 +15,7 @@ import api from 'peek://app/api.js';
 import { findTagByName } from '../item-suggestions.js';
 import { parseTagQuery, intersectItems } from '../tag-query.js';
 import { tagQueryRow } from '../tag-query-row.js';
+import { openItemMessages, openTagQueryMessages, openNewItemMessages } from './editor-publish.js';
 
 /**
  * Search notes by content
@@ -102,6 +103,7 @@ const commands = [
           output: {
             data: { tags: queryTags, itemIds: items.map(item => item.id), unknownTags },
             mimeType: 'tag-query',
+            publish: openTagQueryMessages(queryTags),
             title: `${items.length} items tagged ${queryTags.map(t => '#' + t).join(' ')}`
           }
         };
@@ -116,6 +118,7 @@ const commands = [
           output: {
             data: note,
             mimeType: 'item',
+            publish: openItemMessages(note.id),
             title: getNoteTitle(note)
           }
         };
@@ -131,6 +134,7 @@ const commands = [
           output: {
             data: { type: 'text', content: query },
             mimeType: 'new-item',
+            publish: openNewItemMessages({ type: 'text', content: query }),
             title: 'New note'
           }
         };
@@ -154,6 +158,7 @@ const commands = [
           output: {
             data: note,
             mimeType: 'item',
+            publish: openItemMessages(note.id),
             title: getNoteTitle(note)
           }
         };
