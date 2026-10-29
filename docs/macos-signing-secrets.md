@@ -86,7 +86,15 @@ manual; download the `.cer`, then run:
 `inspect` shows the exact commonName/signing identity, team OU, validity and public
 fingerprint. `package` accepts DER or PEM, rejects non-Developer-ID-Application
 subjects/extensions and mismatched keys, then prompts through OpenSSL for the key
-passphrase and a strong nonempty P12 export password. Output is `signing.p12`.
+passphrase and a strong randomly generated nonempty P12 export password from a
+password manager (prefer ASCII to reduce cross-tool encoding ambiguity). Re-enter
+the export password once more at OpenSSL's terminal input to verify the P12 MAC
+and readability before publication; child diagnostics, including the usual prompt,
+are suppressed for this readback, so type when the script asks. A failed readback
+publishes nothing. Output is `signing.p12`. This verifies OpenSSL readback, not
+macOS import. The existing 3DES/SHA1 compatibility-only transport envelope is
+legacy protection, not a modern archival-encryption recommendation; retain strong
+random passwords and encrypted storage, and do not weaken source-key encryption.
 These checks do not establish Apple trust, revocation, account authorization or
 macOS acceptance. Download the approved team API `.p8` manually from App Store
 Connect: **do not generate it locally**. No preparation command calls Apple/GitHub
@@ -273,7 +281,7 @@ remain unsupported; actual macOS cancellation/cleanup still needs validation.
 |---|---|---|
 | `v0.0.1-signing-candidate.1` | `1.0.1` | Run `40705597132` failed in pre-credential adapter tests (`output-location` from macOS temporary-directory aliases); signing step never ran. |
 | `v0.0.1-signing-candidate.2` | `1.0.2` | Run `40729841853`, source `262715904daed272789325a60645994b006d5148`: setup/selection/install/build passed; signing step failed with only `tool-exit` (2026-10-28 16:51:00–16:51:02 UTC). Upload skipped; failing tool unknown. |
-| `v0.0.1-signing-candidate.3` | `1.0.3` | Reserved for fixed stage/operation diagnostics; coordinator must choose a new reviewed landed source SHA before immutable tagging/dispatch. |
+| `v0.0.1-signing-candidate.3` | `1.0.3` | Run `40817159301`, source `3ae7810a83e90ba9bbd59b147425b3dfa7506adf`: failed `2026-10-29T04:21:27Z`, `stage=prepare; operation=keychain-import; reason=tool-exit; status=1`, then blocked `tool-exit`. Cause remains unproven; no signing/submission/artifacts established. |
 
 Use a new allocation for a rebuild; do not recycle these identifiers for different bytes.
 
@@ -313,9 +321,11 @@ disabled; there must be no duplicate implementation writer.
    before dispatch (there is no candidate environment approval click). Do not
    dispatch a mutable/unreviewed ref. Confirm the unsigned workflow's reserved-tag
    exclusion has landed **before** creating any candidate tag.
-4. Use the next allocation above: `v0.0.1-signing-candidate.3` with build `1.0.3`
-   for this diagnostic retry, at a new reviewed landed source commit. Never move
-   the existing .1/.2 tags. Subsequent
+4. No retry is allocated by the local preparation readback change. First follow the
+   [actual-P12 investigation handoff](../notes/macos-signing-readiness.md#candidate-3-import-investigation-2026-10-29)
+   and obtain separate approval for any real credential validation/repackaging/upload.
+   A dispatch alone cannot fix a malformed P12 or wrong secret pairing. Never move
+   the existing .1/.2/.3 tags. Subsequent
    retries need a new tag and unique numeric `CFBundleVersion`, canonical
    `major.minor.patch` (major 1–9999, minor/patch 0–99).
    Keep an allocation record; use a new number/candidate for a rebuild, not a
@@ -375,7 +385,9 @@ Candidate .2 reached child tools, but its two-second failure does **not** prove
 certificate import or any other specific operation failed. No artifact,
 notarization or signing success was established. Offline source review found no
 provable additional Darwin command compatibility bug, so this retry changes
-observability only; it does not rotate, repackage or guess credentials. For .3,
+observability only; it does not rotate, repackage or guess credentials. The .3 result now narrows the failing operation to `keychain-import`, exit 1,
+not its underlying cause (see the allocation table and readiness investigation).
+For any separately approved later candidate,
 record the exact fixed `stage`, `operation`, `reason` and optional `status` lines,
 the final sanitized blocked code, any validated submission IDs, source SHA/build,
 and whether cleanup failed and upload was skipped. Do not collect raw tool logs,

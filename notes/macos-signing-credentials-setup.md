@@ -78,10 +78,15 @@ mv ~/Downloads/developerID_application.cer "$SIGN_DIR/developer-id.cer"
   signing identity asked for in step 8. The ten characters in parentheses are the Team ID.
 - `package` checks that the certificate is a Developer ID Application certificate and that
   it matches the private key, then prompts for the key's passphrase and a new, non-empty
-  **P12 export password**. Keep that password; step 8 asks for it.
+  **P12 export password** from a password manager (strong randomly generated ASCII
+  recommended). Re-enter that password at the script's readback request; OpenSSL's
+  own prompt/errors are suppressed for this check. Failed MAC/readability verification
+  publishes no P12. Keep that password; step 8 asks for it. This is an OpenSSL
+  round-trip, not proof of macOS import or validation of existing remote secrets.
 - The export explicitly uses 3DES key and certificate PBE, SHA1 MAC and 2048
   iterations for macOS import compatibility rather than OpenSSL's changing defaults.
-  This is a password-protected transport profile, not the source-key encryption:
+  This is a **legacy compatibility-only** password-protected transport profile,
+  not modern archival protection and not the source-key encryption:
   the original AES-encrypted private key is unchanged. Keep a strong export password
   and encrypted storage; actual macOS import remains a candidate validation gate.
 - Result: `$SIGN_DIR/signing.p12`. If it reports that the certificate and key don't match,
@@ -136,7 +141,8 @@ For the implemented candidate path, the reserved namespace is
 `v*-signing-candidate.*` (`REF_TYPE=tag`); replace the example's generic pattern after
 owner review. Environment ref policy is not tag immutability: trusted creation and
 no-update/no-delete rules must be separately authorized and established. The last
-coordinator metadata check found no repository rulesets. Do not change existing
+coordinator metadata check recorded active ruleset `26046298` prohibiting candidate
+updates/deletion, with no bypass actors. Do not change existing
 settings or reprovision secrets just to make a candidate pass. The P12 export
 password is never read from this file.
 
@@ -159,6 +165,15 @@ Copy the token; the script asks for it at a hidden prompt and holds it only in i
 token on the same settings page once step 8 has finished.
 
 ## 8. Create the environment and upload the secrets
+
+**Existing candidate environment:** the user removed required reviewers for
+candidate-only runs. The default commands below describe initial provisioning and
+would reinstate a reviewer; do not rerun them unchanged for a rotation. Any real
+validation/repackage/upload requires separate owner approval, preserving the
+candidate-only ref policy and immutable tags. `--allow-unprotected` does not verify
+those protections. Candidate .3 failed at keychain import, exit 1; the cause is not
+known. Follow the [investigation and next-action record](macos-signing-readiness.md#candidate-3-import-investigation-2026-10-29)
+before changing real secrets; a retry by itself cannot correct the P12.
 
 ```sh
 ./scripts/setup-macos-signing-secrets.sh --config "$SIGN_DIR/signing.env" --dry-run
@@ -195,10 +210,10 @@ gh secret list --repo autonome/peek-builds --env macos-release-signing
 
 The preparation/uploader scripts avoid secret argv, but the signing adapter's
 standard `security` CLI currently exposes P12/keychain passwords in subprocess
-argv (alternative password-auth `notarytool` also does). The user has been asked
-to approve a disposable-hosted-runner exception versus requiring a secure-input
-helper; **no answer is recorded, and live signing remains blocked**. See
-[the explicit exposure/approval boundary](../docs/macos-signing-secrets.md#signing-subprocess-password-exposure--approval-pending).
+argv (alternative password-auth `notarytool` also does). The user approved that
+exception on disposable GitHub-hosted runners only; no persistent/shared-runner
+or raw-log authorization follows. See
+[the explicit exposure/approval boundary](../docs/macos-signing-secrets.md#signing-subprocess-password-exposure--hosted-runner-exception-approved).
 
 The secrets being present proves nothing about signing. A real candidate signing run, Apple's
 notarization verdict, Gatekeeper on the result and a launch on a clean Mac are separate checks.

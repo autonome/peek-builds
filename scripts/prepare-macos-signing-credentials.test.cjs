@@ -1,14 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const script = path.resolve(__dirname, 'prepare-macos-signing-credentials.sh');
 const real = spawnSync('which', ['openssl'], { encoding: 'utf8' }).stdout.trim();
 const password = 'ephemeral-fixture-password'; // Test-only, never a user credential.
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-preparation-test-'));
+  // Private fixture material must stay outside every checkout, even when the
+  // harness sets TMPDIR inside this repository. Production rejects checkout output.
+  const root = fs.mkdtempSync('/tmp/peek-preparation-test-');
   fs.chmodSync(root, 0o700);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
@@ -25,6 +26,10 @@ if(a[0]==='genrsa') a.splice(1,0,'-passout','fd:3');
 if(a[0]==='req') a.push('-passin','fd:3','-subj','/CN=Fixture');
 if(a[0]==='pkey') a.push('-passin','fd:3');
 if(a[0]==='pkcs12' && a.includes('-export')) a.push('-passin','fd:3','-passout','fd:4');
+if(a[0]==='pkcs12' && !a.includes('-export') && !a.includes('-passin')) {
+  if(process.env.TEST_READBACK_FAIL) process.exit(1);
+  a.push('-passin','fd:3');
+}
 // stdin is ignored: OpenSSL 4 on macOS fails to decode keys with -passin fd: when stdin is a pipe.
 const r=spawnSync(process.env.TEST_OPENSSL,a,{stdio:['ignore','inherit','inherit',fs.openSync(process.env.TEST_SECRET,'r'),fs.openSync(process.env.TEST_EMPTY || process.env.TEST_SECRET,'r')]});
 process.exit(r.status ?? 1);
@@ -95,6 +100,10 @@ test('encrypted generation, PEM and DER packaging, metadata, permissions, nonove
     assert.match(metadata, /MAC: sha1, Iteration 2048/);
     assert.match(metadata, /PKCS7 Encrypted data: pbeWithSHA1And3-KeyTripleDES-CBC, Iteration 2048/);
     assert.match(metadata, /Shrouded Keybag: pbeWithSHA1And3-KeyTripleDES-CBC, Iteration 2048/);
+    const certs = f.crypto(['pkcs12', '-in', path.join(out, 'signing.p12'), '-passin', 'fd:3', '-nokeys']).stdout;
+    assert.equal((certs.match(/BEGIN CERTIFICATE/g) || []).length, 1, 'one certificate bag');
+    const keys = f.crypto(['pkcs12', '-in', path.join(out, 'signing.p12'), '-passin', 'fd:3', '-nocerts', '-nodes']).stdout;
+    assert.equal((keys.match(/BEGIN PRIVATE KEY/g) || []).length, 1, 'one private key bag (fixture only, memory only)');
     assert.deepEqual(fs.readFileSync(key), original, 'AES-encrypted source key unchanged');
     clean(out);
     const before = fs.readFileSync(path.join(out, 'signing.p12'));
@@ -118,7 +127,7 @@ test('CSR failure preserves key; type/key mismatches, cancellation and export fa
   const plaintext = path.join(f.root, 'plaintext.pem');
   f.crypto(['pkey', '-in', key, '-passin', 'fd:3', '-out', plaintext]);
   assert.notEqual(f.run(['package', '--dir', dir, '--cert', pem, '--key', plaintext]).status, 0);
-  for (const [cert, k, env] of [[installer, key, {}], [missingOid, key, {}], [pem, wrongKey, {}], [pem, key, { TEST_FAIL: 'pkcs12' }], [pem, key, { TEST_CANCEL: 'pkey' }]]) {
+  for (const [cert, k, env] of [[installer, key, {}], [missingOid, key, {}], [pem, wrongKey, {}], [pem, key, { TEST_FAIL: 'pkcs12' }], [pem, key, { TEST_READBACK_FAIL: '1' }], [pem, key, { TEST_CANCEL: 'pkey' }]]) {
     const r = f.run(['package', '--dir', dir, '--cert', cert, '--key', k], env);
     assert.notEqual(r.status, 0); assert.ok(!fs.existsSync(path.join(dir, 'signing.p12'))); clean(dir); assert.ok(fs.existsSync(key));
   }

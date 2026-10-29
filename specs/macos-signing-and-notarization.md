@@ -61,6 +61,19 @@ or command changes are included. Reserve `.3` / `1.0.3` for the diagnostic retry
 the coordinator chooses a new reviewed landed source SHA, never moves .1/.2 tags,
 and captures fixed failure lines, final blocked code, validated submission IDs
 and cleanup/upload outcomes. Raw tool logs remain prohibited.
+Candidate `.3` / `1.0.3`, source `3ae7810a83e90ba9bbd59b147425b3dfa7506adf`,
+run `40817159301`, failed `2026-10-29T04:21:27Z` with
+`stage=prepare; operation=keychain-import; reason=tool-exit; status=1`, then blocked
+`tool-exit`. This identifies the operation, not the underlying cause; neither
+incorrect password nor unsupported algorithms is proven. The existing explicit
+3DES/SHA1 export profile already predates .3. A bounded preparation follow-up
+requires OpenSSL password/MAC/readability readback before publishing a new P12,
+with offline bag-count/readback-failure tests and unchanged source-key protection.
+This is local validation, not a proven macOS repair or validation of real secrets.
+No adapter/uploader change or retry allocation follows. Actual credential
+validation/repackaging/upload needs separate custodian approval; a retry cannot
+repair a malformed secret. See the readiness investigation for public-source
+limits, legacy-envelope disclosure and the exact next coordinator action.
 See the readiness audit and candidate runbook for remaining human/macOS gates.
 One deliberate implementation difference is adapter-owned bounded notarization/log
 inspection instead of the builder's opaque built-in

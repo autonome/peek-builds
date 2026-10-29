@@ -1,6 +1,6 @@
 # macOS Developer ID signing readiness
 
-Status: **executable candidate integration implemented; no live candidate run**.
+Status: **candidate .3 reached ephemeral-keychain import and failed; no live signing success**.
 The [setup script and usage guide](../docs/macos-signing-secrets.md), neutral policy,
 production adapter and manual candidate workflow have offline tests. The spec
 stays `enabled: false` to prevent a duplicate writer. Metadata-only human/runtime
@@ -107,6 +107,73 @@ Electron 43 works on the selected runner. Those checks, actual credential validi
 entitlement/build-number owner review, immutable tag creation protections and both
 quarantined/offline clean-Mac downloads remain mandatory. See the operational
 [candidate runbook](../docs/macos-signing-secrets.md#signed-candidate-runbook).
+
+## Candidate .3 import investigation (2026-10-29)
+
+Candidate `v0.0.1-signing-candidate.3`, build `1.0.3`, source
+`3ae7810a83e90ba9bbd59b147425b3dfa7506adf`, [run 40817159301](https://github.com/autonome/peek-builds/actions/runs/40817159301),
+failed at `2026-10-29T04:21:27Z` with the fixed diagnostic:
+
+```text
+macOS candidate tool failed: stage=prepare; operation=keychain-import; reason=tool-exit; status=1
+macOS candidate blocked: tool-exit
+```
+
+This proves the import child exited 1, not why. It does not prove wrong password,
+unsupported PBE, malformed P12, successful app signing, Apple submission or artifacts.
+No raw child logs or credential values were accessed in this investigation.
+
+Source audit: preparation generates a 2048-bit RSA key encrypted with AES-256,
+checks the Apple Developer ID Application OID, CN/team and matching public keys,
+then exports one key and one leaf certificate. The export already explicitly uses
+`PBE-SHA1-3DES` for **both** key and certificate bags, SHA1 MAC, 2048 iterations;
+it is not the OpenSSL 3 default AES/PBKDF2 envelope. Offline fixtures inspect these
+actual algorithms and bag counts. They do not establish the contents of the real
+uploaded secret. The uploader checks file/metadata shape and size only: it does
+not open the P12 or verify its password, and dry-run never requests that password.
+Presence of seven remote secret names does not validate any pairing.
+
+Adapter audit: after capturing the search list, it creates a random 32-byte hex
+password keychain, sets its timeout and unlocks it; import uses explicit `-k`,
+`-P` and `-T /usr/bin/codesign`. Partition-list setup, search-list selection and
+exact identity verification occur **after** import. There is no evidence that
+changing these arguments, adding blanket access, or weakening identity gates
+would remedy this failure. Adapter and uploader remain unchanged.
+
+Public documentation checked for this investigation:
+
+- [OpenSSL 3 pkcs12 manual](https://docs.openssl.org/3.0/man1/openssl-pkcs12/)
+  documents AES-256-CBC/PBKDF2 defaults, explicit PBE selection, `-info` algorithm
+  inspection, and separate integrity/encryption passwords (`-twopass`) being
+  incompatible with most software. The script does not use `-twopass` or
+  provider-dependent `-legacy` defaults (which may select RC2).
+- [Apple Keychain Access import/export guide](https://support.apple.com/guide/keychain-access/import-and-export-keychain-items-kyca35961/mac)
+  documents transfer of certificates/keys and needing the export password on
+  import. It does **not** specify a modern macOS PKCS#12 algorithm compatibility
+  matrix. These sources cannot identify the cause of this exit 1 or guarantee
+  the existing 3DES profile works on the selected runner.
+
+The bounded improvement is an OpenSSL password/MAC/readability round-trip **before
+publishing a newly packaged P12**. The operator re-enters the export password at
+OpenSSL's terminal input; raw diagnostics are suppressed and failure publishes
+nothing. This detects a failed readback locally; it neither proves macOS import
+nor validates the already-uploaded secret. Choose a strong randomly generated
+ASCII wrapping password in a password manager (reduces encoding ambiguity, not a
+finding that encoding caused .3). The existing legacy 3DES/SHA1 envelope is retained
+for compatibility only, not endorsed as modern archival protection: offline
+password attacks remain possible, so encrypted storage and strong randomness are
+required. Source RSA strength/AES encryption and all signing gates are unchanged.
+
+No code retry allocation is needed for this local preparation-only change. Never
+reuse .1/.2/.3 or assume another dispatch repairs the secret. Next coordinator
+step: review/land this bounded change, then obtain separate owner approval for a
+custodian to validate the **actual** P12/password and exact identity privately on
+a trusted Mac. Only if justified and approved, repackage into a fresh private
+outside-checkout directory and update the paired P12/password secrets together,
+preserving candidate protections. No key rotation or re-upload is authorized by
+fixture success. Allocate the next unused candidate/build only after that evidence
+and approval; choose source SHA after landing/review. Clean-Mac, Apple and cleanup
+gates remain unproven.
 
 ## Neutral policy/orchestration layer
 

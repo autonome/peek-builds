@@ -126,7 +126,7 @@ case $command_name in
     openssl pkey -in "$key" -pubout -out "$work/key.pub" || fail 'Cannot unlock/read private key.'
     openssl x509 -in "$work/cert.pem" -pubkey -noout > "$work/cert.pub"
     cmp -s "$work/key.pub" "$work/cert.pub" || fail 'Certificate/key mismatch; obtain the certificate issued for this key CSR.'
-    printf '%s\n' 'Unlock the key again, then choose and confirm a strong nonempty P12 export password.'
+    printf '%s\n' 'Unlock the key again, then enter and confirm a strong randomly generated nonempty P12 export password from your password manager.'
     # Explicit Apple interoperability profile, independent of OpenSSL defaults.
     # P12 is a password-protected transport; the source key remains AES encrypted.
     openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -iter 2048 \
@@ -135,6 +135,10 @@ case $command_name in
     if openssl pkcs12 -in "$work/signing.p12" -noout -passin pass: >/dev/null 2>&1; then
       fail 'Empty P12 password refused; rerun package and choose a nonempty password.'
     fi
+    # A failed empty-password probe alone cannot establish that the P12 is readable.
+    # Re-enter the export password through OpenSSL, never Bash/argv/environment.
+    printf '%s\n' 'Re-enter the P12 export password to verify the completed transport before publication.'
+    openssl pkcs12 -in "$work/signing.p12" -noout 2>/dev/null || fail 'P12 password/readback verification failed; no P12 published.'
     publish "$work/signing.p12" "$dir/signing.p12"
     printf 'Saved: %s\n' "$dir/signing.p12"
     printf '%s\n' 'Back up the encrypted key and P12 securely. Download the approved team API P8 manually from App Store Connect; do not generate it locally.'
