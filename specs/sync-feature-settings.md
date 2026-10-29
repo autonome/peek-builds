@@ -1,16 +1,16 @@
 ---
 enabled: true
-touches: [packages/schema/v1.json, apps/server/schema.json, apps/server/db.js, apps/server/index.js, apps/server/test.js, apps/desktop/main/sync.ts, apps/desktop/main/sync.test.ts, apps/desktop/main/feature-settings-sync.ts, apps/desktop/main/feature-settings-sync.test.ts, docs/sync-coverage-gaps.md]
+touches: [packages/schema/v1.json, apps/server/schema.json, apps/server/db.js, apps/server/index.js, apps/server/test.js, apps/desktop/main/sync.ts, apps/desktop/main/sync.test.ts, apps/desktop/main/feature-settings-sync.ts, apps/desktop/main/feature-settings-sync.test.ts, apps/desktop/main/tile-ipc.ts, apps/desktop/main/ipc.ts, apps/desktop/renderer/utils.js, docs/sync-coverage-gaps.md]
 depends-on: [sync-visits]
 ---
 
-# Feature preferences sync, machine-specific rows excluded
+# Feature preferences sync, allowlisted preferences only
 
 Every user preference lives in the desktop `feature_settings` table
 (`id, featureId, key, value, updatedAt`, unique on `(featureId, key)`), and none of it syncs.
 Changing the theme, the ad blocker or a peeklet's options on one machine leaves every other
 machine as it was. This spec syncs the table with last-write-wins on `updatedAt`, keyed by
-`(featureId, key)`, and leaves machine-specific rows out.
+`(featureId, key)`, for an explicit allowlist of portable preferences only.
 
 Follow the shape `specs/sync-visits.md` added for visits (`pushVisitsToServer()`,
 `pullVisitsFromServer()`, `POST /visits`, `GET /visits/since/:timestamp`). Read that code on
@@ -18,22 +18,41 @@ Follow the shape `specs/sync-visits.md` added for visits (`pushVisitsToServer()`
 
 ## Which rows sync
 
-All rows sync except those whose `featureId` is on a fixed list of machine-local features. A new
-peeklet's settings therefore sync with no extra work. Put the list in a new module
-`apps/desktop/main/feature-settings-sync.ts`. Export `MACHINE_LOCAL_FEATURES` (a `Set`) and
-`isSyncedSetting(featureId, key)`. The list:
+Only rows on an explicit allowlist sync; everything else stays on its machine. A new feature's
+settings do not sync until someone adds them, because an exclusion list leaked credentials
+(`wonderwall` OAuth tokens), absolute paths (`core` `backupDir`), window geometry (`peeks`/`slides`
+`sizes`), OS-specific shortcuts (`cmd` `shortcutKey`) and per-machine caches (`cmd`
+`command_cache`, `backup` `lastBackupTime`, `onboarding` `seeded`).
 
-- `system` — `deviceId` is this machine's identity (`device.ts getDeviceId()`).
-- `sync` — server URL, watermarks and last-sync bookkeeping (`sync.ts`).
-- `session` and `closed-window-stack` — window bounds and window ids (`session.ts`, `main.ts`).
-- `page-permissions` — per-origin grants (`permission-store.ts`).
-- The featureId used by `atproto-session-store.ts` (credentials) and the one used by
-  `debug-flag-store.ts`. Read both files for the exact strings, and name each in a comment next to
-  its entry.
+Put the allowlist in a new module `apps/desktop/main/feature-settings-sync.ts`. Export
+`SYNCED_SETTINGS` (exact `featureId` + `key` pairs, with a sub-key allowlist where one stored
+value is an object mixing portable and machine-specific fields) and `isSyncedSetting(featureId,
+key)`. An entry qualifies only if it is a preference the user chose in the UI and means the same
+on every machine and OS. Never: credentials or tokens, absolute paths, window sizes or positions,
+display data, global shortcuts, caches, timestamps of local activity, install or onboarding
+bookkeeping, device ids. Start with the theme choice, dark mode, the ad blocker's settings, and
+the user-facing preference keys of `core`, `editor` and the built-in features, read from the
+Settings UI and each feature's settings code. Record every entry with its file + symbol and
+one line on why it is portable under Decisions, and every excluded preference that looked
+tempting with why. When an object value mixes fields, sync only the allowed sub-keys and merge
+them into the local object rather than replacing it.
 
-`isSyncedSetting()` returns false for those features and true for everything else. Push skips
-non-synced rows. Pull ignores any incoming row for a machine-local feature, so a buggy client
-cannot overwrite them.
+Push sends only allowlisted rows. Pull ignores any incoming row not on the allowlist, so a buggy
+or older client cannot write anything else.
+
+## Writes that change nothing keep their timestamp
+
+A write whose value equals the stored value leaves the row and its `updatedAt` untouched, in
+every `feature_settings` write path: `tile-ipc.ts` `tile:settings:set`, `utils.js`
+`createDatastoreStore.set()`, `ipc.ts` setters, and any other direct writer. Otherwise a machine
+that only re-saved (on launch, on window resize) would overwrite real changes elsewhere.
+
+## A machine pulls before it ever pushes
+
+Until a machine has completed one full feature-settings pull, it pushes nothing and its local
+rows lose every conflict. Record the completion in this machine's `sync` bookkeeping. A fresh or
+reset machine therefore takes the user's existing settings rather than replacing them with its
+defaults or startup writes.
 
 ## Server
 
@@ -71,7 +90,7 @@ cannot overwrite them.
 
 ## Deletes
 
-A hard `DELETE` of a synced row does not propagate. Today every hard delete is on a machine-local
+A hard `DELETE` of a synced row does not propagate. Today every hard delete is on a non-synced
 feature (`permission-store.ts`, `session.ts`, `migrate-hud.ts`). Record this in the doc as an
 accepted gap, and do not add tombstones.
 
@@ -79,8 +98,9 @@ accepted gap, and do not add tombstones.
 
 In `docs/sync-coverage-gaps.md`:
 
-- Add a section saying `feature_settings` now syncs, with the machine-local list, the no-delete
-  gap and the no-live-refresh limit.
+- Add a section saying allowlisted `feature_settings` rows now sync, with the allowlist, the
+  criteria for adding an entry, the pull-before-push rule, the no-delete gap and the
+  no-live-refresh limit.
 - In the same section, record the desktop tables deliberately left unsynced, each with its
   reason:
   - `settings`: one-shot migration flags that mean something different on each machine.
@@ -94,18 +114,24 @@ In `docs/sync-coverage-gaps.md`:
 
 ## Tests
 
-- `feature-settings-sync.test.ts`: `isSyncedSetting()` is false for each machine-local feature
-  and true for `core` and an arbitrary tile id.
+- `feature-settings-sync.test.ts`: `isSyncedSetting()` is true for each allowlisted pair, and
+  false for an unknown tile id, `wonderwall`, `core` `backupDir`, `peeks` `sizes`, `cmd`
+  `shortcutKey`, `cmd` `command_cache`, `backup` `lastBackupTime` and `onboarding` `seeded`.
+- Saving an unchanged value through each write path leaves `updatedAt` as it was.
+- Fresh machine: initialize a new profile and run its startup writers, then sync against a
+  server holding older real values for allowlisted keys. The real values survive on the server
+  and arrive locally; nothing is pushed before the first pull completes.
+- A mixed object value syncs only its allowed sub-keys and keeps the local machine-specific ones.
 - `apps/server/test.js`:
   - A post saves rows.
   - An older `updatedAt` does not overwrite a newer one.
   - `since` returns only rows received after the watermark.
   - A malformed row returns 400.
 - `sync.test.ts`, with the same fake server as the visit tests:
-  - A `core` row is pushed and a `system` row is not.
+  - An allowlisted row is pushed; a `system` row and a non-allowlisted `core` key are not.
   - A pulled newer row replaces the local value and keeps the incoming `updatedAt`.
   - A pulled older row is ignored.
-  - A pulled `session` row is ignored.
+  - A pulled `session` row and a pulled `wonderwall` row are ignored.
   - A 404 leaves `syncAll()` succeeding.
 
 ## Verify
