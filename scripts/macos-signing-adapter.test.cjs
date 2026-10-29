@@ -141,7 +141,7 @@ test('pinned intermediate is imported only into the ephemeral keychain before id
   assert.equal(imports.length, 2);
   assert.equal(path.basename(imports[1].args[1]), 'DeveloperIDG2CA.cer');
   assert.equal(imports[1].args[3], imports[0].args[3]);
-  assert.ok(imports[1].args[3].startsWith(f.temp + path.sep));
+  assert.ok(imports[1].args[3].startsWith(fs.realpathSync(f.temp) + path.sep));
   assert.ok(f.calls.indexOf(imports[1]) < f.calls.findIndex(c => c.args[0] === 'find-identity'));
 });
 
@@ -175,7 +175,7 @@ for (const scenario of [
     assert.ok(!log.includes(secrets.APPLE_API_KEY_P8));
     const lookups = f.calls.filter(c => c.args[0] === 'find-identity');
     assert.equal(lookups.length, scenario.name.startsWith('valid') ? 1 : 2);
-    assert.ok(lookups.every(c => c.args.at(-1).startsWith(f.temp + path.sep)));
+    assert.ok(lookups.every(c => c.args.at(-1).startsWith(fs.realpathSync(f.temp) + path.sep)));
   });
 }
 
