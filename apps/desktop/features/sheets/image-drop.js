@@ -108,5 +108,48 @@ export const layoutCardRow = (start, sizes, width, gap) => {
   return rects;
 };
 
+/**
+ * Place several new cards so they all sit inside the visible area. When the
+ * row-wrapped layout from `start` already fits, it is returned unchanged.
+ * Otherwise every card is scaled by the same factor (keeping its aspect ratio),
+ * the largest at which the wrapped layout fits, and laid out from the visible
+ * area's top-left, a gap in. Fitting wins over any minimum card size.
+ *
+ * @param {Array<{w: number, h: number}>} sizes card sizes in order
+ * @param {{left: number, top: number, right: number, bottom: number}} view visible area in grid coordinates
+ * @param {number} gap space between cards
+ * @param {{x: number, y: number}} [start] top-left of the first card when nothing needs scaling
+ * @param {number} [snap] grid snap in px (0 = off), applied to the scaled layout's start
+ * @returns {Array<{x: number, y: number, w: number, h: number}>}
+ */
+export const fitCardsInView = (sizes, view, gap, start, snap = 0) => {
+  const left = Number(view?.left) || 0;
+  const top = Number(view?.top) || 0;
+  const right = Number(view?.right) || 0;
+  const bottom = Number(view?.bottom) || 0;
+  const fits = (rects) => rects.every((r) => r.x + r.w <= right && r.y + r.h <= bottom);
+  if (start) {
+    const natural = layoutCardRow(start, sizes, right, gap);
+    if (fits(natural)) return natural;
+  }
+  const up = (v) => (snap ? Math.ceil(v / snap) * snap : v);
+  const origin = { x: up(left + gap), y: up(top + gap) };
+  const layoutAt = (scale) => layoutCardRow(
+    origin,
+    sizes.map(({ w, h }) => ({ w: Math.max(1, Math.floor(w * scale)), h: Math.max(1, Math.floor(h * scale)) })),
+    right - gap,
+    gap
+  );
+  const fitsPadded = (rects) => rects.every((r) => r.x + r.w <= right - gap && r.y + r.h <= bottom - gap);
+  if (fitsPadded(layoutAt(1))) return layoutAt(1);
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (fitsPadded(layoutAt(mid))) lo = mid; else hi = mid;
+  }
+  return layoutAt(lo);
+};
+
 /** Whether a stored sheet item is an image card; items without a kind are webview cards. */
 export const isImageItem = (item) => item?.kind === 'image' && typeof item.image === 'string' && item.image !== '';

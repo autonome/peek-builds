@@ -23,7 +23,7 @@ import {
   fitWithin, dataUrlToBlob, isStoredImageDataUrl, IMAGE_ENCODINGS, IMAGE_QUALITY
 } from './sheet-options.js';
 import {
-  CARD_IMAGE_MAX_SIDE, dragHasFiles, pickImageFiles, imageCardBounds, layoutCardRow, isImageItem
+  CARD_IMAGE_MAX_SIDE, dragHasFiles, pickImageFiles, imageCardBounds, fitCardsInView, isImageItem
 } from './image-drop.js';
 import {
   classifyPaste, pastePoint, urlCardBounds, shouldIgnorePaste
@@ -439,7 +439,7 @@ const addImageCards = async (files, point) => {
     const b = imageCardBounds(point, img, grid.freeformSnap);
     return { w: b.w, h: b.h };
   });
-  const rects = layoutCardRow({ x: first.x, y: first.y }, sizes, gridBounds(grid).right, grid.gap);
+  const rects = fitCardsInView(sizes, gridBounds(grid), grid.gap, { x: first.x, y: first.y }, grid.freeformSnap);
   encoded.forEach((img, i) => {
     sheetConfig.items.push({
       id: crypto.randomUUID().slice(0, 8),

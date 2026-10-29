@@ -11,9 +11,34 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const mod = await import(join(__dirname, '..', '..', 'features', 'sheets', 'image-drop.js'));
 const {
-  dragHasFiles, pickImageFile, pickImageFiles, layoutCardRow, imageCardBounds, isImageItem,
+  dragHasFiles, pickImageFile, pickImageFiles, layoutCardRow, imageCardBounds, isImageItem, fitCardsInView,
   IMAGE_CARD_WIDTH, IMAGE_CARD_MIN_HEIGHT, IMAGE_CARD_MAX_HEIGHT
 } = mod;
+
+describe('fitCardsInView', () => {
+  const view = { left: 0, top: 0, right: 900, bottom: 600 };
+  const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+  it('keeps the wrapped layout when it already fits', () => {
+    const sizes = [{ w: 300, h: 200 }, { w: 300, h: 150 }];
+    const start = { x: 100, y: 50 };
+    assert.deepEqual(fitCardsInView(sizes, view, 8, start), layoutCardRow(start, sizes, 900, 8));
+  });
+
+  it('fits many cards inside the view, keeps aspect ratios and does not overlap', () => {
+    const sizes = Array.from({ length: 24 }, (_, i) => ({ w: 300, h: 100 + (i % 5) * 100 }));
+    const rects = fitCardsInView(sizes, view, 8, { x: 450, y: 300 });
+    assert.equal(rects.length, 24);
+    rects.forEach((r, i) => {
+      assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.w <= 900 && r.y + r.h <= 600);
+      assert.ok(Math.abs(r.w / r.h - sizes[i].w / sizes[i].h) < 0.15 * (sizes[i].w / sizes[i].h));
+      assert.ok(r.w < sizes[i].w);
+    });
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) assert.ok(!overlaps(rects[i], rects[j]));
+    }
+  });
+});
 
 describe('dragHasFiles', () => {
   it('is true only when the drag carries files', () => {
