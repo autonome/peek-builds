@@ -76,6 +76,17 @@ export const getGridColumns = (cards) => {
   return cards.length;
 };
 
+/**
+ * Whether a keydown target is a text-entry element (input, textarea, select,
+ * contenteditable), where grid keys must be left to the field.
+ * @param {{tagName?: string, isContentEditable?: boolean}|null} target
+ */
+export const isEditableTarget = (target) => {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(String(target.tagName || '').toUpperCase());
+};
+
 const SPATIAL_KEYS = {
   j: 'down', ArrowDown: 'down',
   k: 'up', ArrowUp: 'up',

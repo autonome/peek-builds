@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findNearestInDirection } from '../../renderer/lib/grid-nav.js';
+import { findNearestInDirection, isEditableTarget } from '../../renderer/lib/grid-nav.js';
 
 const r = (left, top, width = 100, height = 100) => ({ left, top, width, height });
 
@@ -32,4 +32,12 @@ test('works for staggered free-placed cards', () => {
 
 test('bad from index returns -1', () => {
   assert.equal(findNearestInDirection([r(0, 0)], 3, 'down'), -1);
+});
+
+test('isEditableTarget recognises text-entry elements only', () => {
+  assert.equal(isEditableTarget({ tagName: 'INPUT' }), true);
+  assert.equal(isEditableTarget({ tagName: 'textarea' }), true);
+  assert.equal(isEditableTarget({ tagName: 'DIV', isContentEditable: true }), true);
+  assert.equal(isEditableTarget({ tagName: 'PEEK-CARD' }), false);
+  assert.equal(isEditableTarget(null), false);
 });

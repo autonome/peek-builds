@@ -17,6 +17,7 @@ import 'peek://app/components/peek-card.js';
 import 'peek://app/components/peek-grid.js';
 import 'peek://app/components/peek-input.js';
 import { createGhostCard } from 'peek://app/lib/ghost-card.js';
+import { createKeydownHandler, isEditableTarget } from 'peek://app/lib/grid-nav.js';
 import { DEFAULT_CARD_WIDTH, DEFAULT_CARD_HEIGHT } from 'peek://app/lib/card-size.js';
 
 const DELETE_ICON =
@@ -133,6 +134,7 @@ export const mountCardView = ({ api, searchPlaceholder = 'Search...', logTag = '
 
   let query = '';
   let last = null;
+  const navState = { selectedIndex: 0 };
 
   const render = (spec) => {
     if (spec) last = spec;
@@ -140,6 +142,7 @@ export const mountCardView = ({ api, searchPlaceholder = 'Search...', logTag = '
     const { items, matches, toCard, ghost } = last;
     const q = query.trim().toLowerCase();
     const shown = q && matches ? items.filter((item) => matches(item, q)) : items;
+    navState.selectedIndex = 0;
     grid.innerHTML = '';
     for (const item of shown) grid.appendChild(toCard(item));
     if (ghost) grid.appendChild(createGhostCard(ghost));
@@ -149,6 +152,15 @@ export const mountCardView = ({ api, searchPlaceholder = 'Search...', logTag = '
     query = e.target.value || '';
     render();
   });
+
+  // Arrow / hjkl move the selection, Enter clicks the selected card. A text
+  // field other than the search box (e.g. an inline name edit) keeps its keys.
+  const searchFocused = () =>
+    document.activeElement === input || !!input.shadowRoot?.activeElement;
+  document.addEventListener('keydown', createKeydownHandler(navState, {
+    shouldIgnore: (e) => isEditableTarget(e.target) && !searchFocused(),
+    isInputFocused: searchFocused,
+  }));
 
   setupSeeThrough(api, logTag);
   setupWindowMode(api, logTag);
