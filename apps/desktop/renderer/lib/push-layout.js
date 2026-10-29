@@ -2,10 +2,9 @@
  * Collision push for freeform grid layouts.
  *
  * Pure geometry: given the rectangles cards had when a drag/resize began and
- * the active card's current rectangle, compute the y each other card must take
+ * the active card's final rectangle, compute the y each other card must take
  * so nothing overlaps. Cards only ever move down; a pushed card pushes the
- * cards it then overlaps. Computing from gesture-start positions means a card
- * pushed mid-gesture returns to its start spot when the active card moves off.
+ * cards it then overlaps.
  */
 
 const overlaps = (a, b) =>

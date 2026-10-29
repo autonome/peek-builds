@@ -335,7 +335,10 @@ export class PeekGrid extends PeekElement {
     }
 
     if (isFreeform) {
-      this._applyFreeformPositions();
+      // In push mode the active card follows the pointer freely; re-applying
+      // the stored layout mid-gesture (e.g. after the resize observer fires)
+      // would snap it back.
+      if (!(this.pushCards && this._dragState)) this._applyFreeformPositions();
       if (this.freeformEditing) {
         this._attachEditListeners();
       } else {
@@ -928,10 +931,13 @@ export class PeekGrid extends PeekElement {
       origTop: parseFloat(child.style.top) || 0,
       origWidth: rect.width,
       origHeight: rect.height,
-      // Every card's rectangle at gesture start, so pushes are computed from
-      // where cards were rather than accumulating across pointer moves.
+      // Every card's rectangle at gesture start; the push on drop is computed
+      // from where cards were before the gesture.
       startRects: this.pushCards ? this._readChildRects() : null
     };
+
+    // Push mode lets the active card overlap others, so draw it on top.
+    if (this.pushCards) child.style.zIndex = '1000';
 
     child.setPointerCapture(e.pointerId);
     child.addEventListener('pointermove', this._boundPointerMove);
@@ -951,7 +957,6 @@ export class PeekGrid extends PeekElement {
     if (s.edge === 'move') {
       s.child.style.left = `${this._snap(s.origLeft + dx)}px`;
       s.child.style.top = `${this._snap(s.origTop + dy)}px`;
-      this._applyPush();
       return;
     }
 
@@ -976,7 +981,6 @@ export class PeekGrid extends PeekElement {
     s.child.style.top = `${this._snap(newTop)}px`;
     s.child.style.width = `${this._snap(newW)}px`;
     s.child.style.height = `${this._snap(newH)}px`;
-    this._applyPush();
   }
 
   /** Current bounds of every slotted child, in slot order. */
@@ -990,24 +994,24 @@ export class PeekGrid extends PeekElement {
     }));
   }
 
-  /** Move cards overlapped by the active card straight down (pushCards mode). */
-  _applyPush() {
+  /**
+   * Layout entries for cards the active card's final rectangle pushes down
+   * (pushCards mode), computed once from the gesture-start rectangles.
+   */
+  _computePushedLayout(activeBounds) {
     const s = this._dragState;
-    if (!this.pushCards || !s?.startRects) return;
+    if (!this.pushCards || !s?.startRects) return {};
     const children = this._getSlottedChildren();
     const activeIndex = children.indexOf(s.child);
-    if (activeIndex < 0 || children.length !== s.startRects.length) return;
-    const active = {
-      x: parseFloat(s.child.style.left) || 0,
-      y: parseFloat(s.child.style.top) || 0,
-      w: parseFloat(s.child.style.width) || s.origWidth,
-      h: parseFloat(s.child.style.height) || s.origHeight
-    };
-    const rects = pushLayout(s.startRects, activeIndex, active);
+    if (activeIndex < 0 || children.length !== s.startRects.length) return {};
+    const rects = pushLayout(s.startRects, activeIndex, activeBounds);
+    const pushed = {};
     children.forEach((el, i) => {
-      if (i !== activeIndex) el.style.top = `${rects[i].y}px`;
+      const cid = this._getChildId(el);
+      if (!cid || i === activeIndex) return;
+      if (rects[i].y !== s.startRects[i].y) pushed[cid] = rects[i];
     });
-    this._updateContainerHeight();
+    return pushed;
   }
 
   _onPointerUp(e) {
@@ -1030,18 +1034,15 @@ export class PeekGrid extends PeekElement {
       this.freeformLayout = { ...this.freeformLayout, [id]: bounds };
     }
 
-    // Pushed cards persist where they were pushed.
+    // On drop, cards the final rectangle covers move down and persist there.
     if (this.pushCards && s.startRects) {
-      const children = this._getSlottedChildren();
-      const pushed = {};
-      children.forEach((el, i) => {
-        const cid = this._getChildId(el);
-        if (!cid || el === s.child || !s.startRects[i]) return;
-        const y = parseFloat(el.style.top) || 0;
-        if (y !== s.startRects[i].y) pushed[cid] = { ...s.startRects[i], y };
-      });
-      for (const b of Object.values(pushed)) delete b.ghost;
+      const pushed = this._computePushedLayout(bounds);
       this.freeformLayout = { ...this.freeformLayout, ...pushed };
+      for (const el of this._getSlottedChildren()) {
+        const b = pushed[this._getChildId(el)];
+        if (b) el.style.top = `${b.y}px`;
+      }
+      s.child.style.zIndex = '';
     }
 
     this.emit('freeform-layout-change', { layout: this.freeformLayout, itemId: id, bounds });
@@ -1065,7 +1066,7 @@ export class PeekGrid extends PeekElement {
 
   _onSlotChange() {
     if (this.viewMode === 'freeform') {
-      this._applyFreeformPositions();
+      if (!(this.pushCards && this._dragState)) this._applyFreeformPositions();
       if (this.freeformEditing) this._attachEditListeners();
     } else if (this.viewMode === 'fit') {
       this._applyFitLayout();
