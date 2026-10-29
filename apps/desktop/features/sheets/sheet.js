@@ -24,6 +24,9 @@ import {
 import {
   CARD_IMAGE_MAX_SIDE, dragHasFiles, pickImageFile, imageCardBounds, isImageItem
 } from './image-drop.js';
+import {
+  classifyPaste, pastePoint, urlCardBounds, shouldIgnorePaste
+} from './paste.js';
 
 const api = window.app;
 
@@ -429,6 +432,44 @@ const setupImageDrop = () => {
   });
 };
 
+/**
+ * Pasting an image or a URL adds a card, centred on the last pointer position
+ * when it is over the grid, else in the middle of the visible grid. Pastes into
+ * text fields, or while the add dialog or options panel is open, are left alone.
+ */
+const setupPaste = () => {
+  const grid = document.querySelector('peek-grid.cards');
+  let pointer = null;
+  document.addEventListener('pointermove', (e) => {
+    const box = grid.getBoundingClientRect();
+    pointer = { x: e.clientX - box.left, y: e.clientY - box.top };
+  });
+  document.addEventListener('pointerleave', () => { pointer = null; });
+
+  document.addEventListener('paste', async (e) => {
+    const isOpen = (sel) => document.querySelector(sel)?.style.display !== 'none';
+    if (shouldIgnorePaste({
+      target: document.activeElement,
+      dialogOpen: isOpen('.add-dialog'),
+      panelOpen: isOpen('.options-panel')
+    })) return;
+    const pasted = classifyPaste(e.clipboardData);
+    if (!pasted) return;
+    e.preventDefault();
+    const bounds = gridBounds(grid);
+    const point = pastePoint(pointer, { width: bounds.right, height: bounds.bottom });
+    try {
+      if (pasted.kind === 'image') {
+        await addImageCard(pasted.file, point);
+      } else {
+        await addCard(pasted.url, urlCardBounds(point, { w: SLOT_W, h: SLOT_H }, grid.freeformSnap));
+      }
+    } catch (err) {
+      console.error('[sheets] Failed to add pasted card:', err);
+    }
+  });
+};
+
 /** The options panel's name box, kept in step with renames made elsewhere. */
 let optionsNameInput = null;
 
@@ -705,6 +746,7 @@ const init = async () => {
   setupTitleEdit();
   setupEvents();
   setupImageDrop();
+  setupPaste();
   renderCards();
   updateEditState();
 
