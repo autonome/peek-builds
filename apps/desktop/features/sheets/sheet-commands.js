@@ -34,6 +34,9 @@ export const argsFromCommandMessage = (msg, commandName) => {
   return '';
 };
 
+/** The only command that takes, and suggests, a sheet name. */
+export const SHEET_NAME_COMMAND = 'open sheet';
+
 /** `sheet:<id>` map key to `<id>`. */
 export const sheetIdOfKey = (key) => String(key).replace(/^sheet:/, '');
 

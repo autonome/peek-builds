@@ -67,14 +67,14 @@
   "commands": [
     {
       "name": "sheets",
-      "description": "List all widget sheets",
+      "description": "Open the list of widget sheets",
       "action": {
         "type": "execute"
       }
     },
     {
       "name": "list sheets",
-      "description": "List all widget sheets",
+      "description": "Open the list of widget sheets",
       "action": {
         "type": "execute"
       }

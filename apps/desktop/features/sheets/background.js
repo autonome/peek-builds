@@ -12,7 +12,8 @@ import { windowParamsForSheet } from './sheet-options.js';
 import { buildSheetShortcuts, SHEET_OPEN_TOPIC, SHEETS_CHANGED_TOPIC } from './sheet-hotkeys.js';
 import { loadSheetsMap, loadSheet, createSheet as createSheetInStore } from './sheet-store.js';
 import {
-  argsFromCommandMessage, sheetNameOptions, findSheetByName, normalizeSheetName, sheetIdOfKey
+  argsFromCommandMessage, sheetNameOptions, findSheetByName, normalizeSheetName, sheetIdOfKey,
+  SHEET_NAME_COMMAND
 } from './sheet-commands.js';
 
 const api = window.app;
@@ -91,13 +92,24 @@ const openSheetForCommand = async (msg, commandName) => {
   return { success: true };
 };
 
+const SHEET_LIST_COMMANDS = [
+  { name: 'sheets', description: 'Open the list of widget sheets' },
+  { name: 'list sheets', description: 'Open the list of widget sheets' }
+];
+
 const SHEET_PICK_COMMANDS = [
-  { name: 'sheets', description: 'List all widget sheets' },
-  { name: 'list sheets', description: 'List all widget sheets' },
-  { name: 'open sheet', description: 'Open an existing widget sheet by name' }
+  { name: SHEET_NAME_COMMAND, description: 'Open an existing widget sheet by name' }
 ];
 
 const commandDefinitions = [
+  ...SHEET_LIST_COMMANDS.map(({ name, description }) => ({
+    name,
+    description,
+    execute: () => {
+      openSheetsGrid();
+      return { success: true };
+    }
+  })),
   ...SHEET_PICK_COMMANDS.map(({ name, description }) => ({
     name,
     description,
