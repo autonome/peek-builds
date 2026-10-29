@@ -1,5 +1,5 @@
 /**
- * Unit tests for renderer/cmd/note-notice.js — the saved-note notification text.
+ * Unit tests for renderer/cmd/commands/note-notice.js — the saved-note notification text.
  *
  * Run via: node --test tests/unit/note-notice.test.js
  */
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { noteSavedNotice } = await import(
-  join(__dirname, '../../renderer/cmd/note-notice.js')
+  join(__dirname, '../../renderer/cmd/commands/note-notice.js')
 );
 
 describe('noteSavedNotice', () => {

@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the cmd panel's note and edit commands.
+ * Pure helper for the note command's saved notification.
  */
 
 const TYPE_LABELS = { url: 'URL', tagset: 'Tagset', text: 'Note' };

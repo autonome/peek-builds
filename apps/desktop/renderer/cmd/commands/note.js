@@ -10,7 +10,7 @@
  */
 import api from 'peek://app/api.js';
 import { splitTrailingTags, parseTagset, detectType } from 'peek://app/lib/note-tags.js';
-import { noteSavedNotice } from '../note-notice.js';
+import { noteSavedNotice } from './note-notice.js';
 import { openNewItemMessages } from './editor-publish.js';
 
 const NOTE_TAGS = ['note', 'from:cmd'];
