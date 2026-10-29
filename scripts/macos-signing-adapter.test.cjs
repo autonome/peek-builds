@@ -55,9 +55,13 @@ function fixture(t, mutation = {}) {
   const ok = (stdout = '', stderr = '') => ({ code: 0, stdout, stderr, quiescent: true });
   const fakeRun = async (file, args, options) => {
     calls.push({ file, args, options });
-    const target = args.at(-1);
+    const operand = args.at(-1);
+    const target = file === 'otool' ? fs.realpathSync(path.resolve(options.cwd, operand)) : operand;
+    if (file === 'otool') mutation.inspectOtool?.(args, options, target);
+    // Failure selection uses the real target; inspectOtool sees the actual argv.
+    const failureArgs = file === 'otool' ? [...args.slice(0, -1), target] : args;
     if (mutation.active?.(file, args)) return { ...ok(), quiescent: false };
-    if (mutation.fail?.(file, args, calls)) {
+    if (mutation.fail?.(file, failureArgs, calls)) {
       // Simulate every private channel a child/error could populate.
       args.push('SEEDED-PRIVATE-ARGV');
       if (mutation.failureMode === 'throw') throw new Error('SEEDED-PRIVATE-ERROR ' + target);
@@ -114,8 +118,8 @@ function fixture(t, mutation = {}) {
     }
     if (file === 'spctl') return ok('', `${target}: accepted\nsource=${mutation.gatekeeper || 'Notarized Developer ID'}\n`);
     if (file === 'otool') {
-      if (args[0] === '-L') return ok(`${target}:\n\t${mutation.dependency || '/usr/lib/libSystem.B.dylib'} (compatibility version 1.0.0, current version 1336.0.0)\n`);
-      if (args[0] === '-D') return ok(`${target}:\n`);
+      if (args[0] === '-L') return ok(`${operand}:\n${mutation.dylibId ? `\t${mutation.dylibId} (compatibility version 1.0.0, current version 1.0.0)\n` : ''}\t${mutation.dependency || '/usr/lib/libSystem.B.dylib'} (compatibility version 1.0.0, current version 1336.0.0)\n`);
+      if (args[0] === '-D') return ok(`${operand}:\n${mutation.dylibId || ''}\n`);
       return ok('');
     }
     if (file === 'ditto') {
@@ -137,6 +141,39 @@ function fixture(t, mutation = {}) {
   return { adapter, calls, root, temp, output,
     async execute() { try { return await runCandidate(input, secrets, adapter.operations); }
       finally { await adapter.destroy(); } } };
+}
+
+for (const failureFlag of [undefined, '-L', '-D', '-l']) {
+  test(`otool aliases parenthesized helpers and cleans up after ${failureFlag || 'success'}`, async t => {
+    const directories = [];
+    const logs = [];
+    t.mock.method(console, 'error', line => logs.push(line));
+    const relative = 'Contents/Frameworks/Peek Helper (GPU).app/Contents/MacOS/Peek Helper (GPU)';
+    const f = fixture(t, {
+      gpu: true, dylibId: '@rpath/fixture-self-id',
+      inspectOtool(args, options, target) {
+        // Model LLVM's archive-member operand interpretation before resolving it.
+        if (/\(.*\)$/.test(args.at(-1))) throw new Error('archive member operand');
+        assert.equal(args.at(-1), 'target');
+        assert.ok(fs.lstatSync(path.join(options.cwd, 'target')).isSymbolicLink());
+        assert.equal(fs.realpathSync(path.join(options.cwd, 'target')), target);
+        assert.equal(fs.statSync(options.cwd).mode & 0o777, 0o700);
+        for (const directory of directories) assert.equal(fs.existsSync(directory), false);
+        directories.push(options.cwd);
+      },
+      fail: (file, args) => file === 'otool' && args[0] === failureFlag && args.at(-1).endsWith('/' + relative),
+    });
+    if (failureFlag) {
+      await assert.rejects(f.execute(), { code: 'tool-exit' });
+      assert.ok(logs.includes(`macOS candidate tool target: "${relative}"`));
+    } else {
+      await f.execute();
+      // The alias header is ignored and -D still removes the self ID from -L.
+      assert.ok(f.calls.filter(c => c.file === 'otool').length > 12);
+    }
+    assert.ok(directories.length > 0);
+    for (const directory of directories) assert.equal(fs.existsSync(directory), false);
+  });
 }
 
 test('pinned intermediate is imported only into the ephemeral keychain before identity lookup', async t => {

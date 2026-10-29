@@ -250,7 +250,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     if (inventoryBundle && (inventoryTools.has(file) ||
         (file === 'xcrun' && args[0] === 'stapler' && args[1] === 'validate'))) {
       try {
-        const target = fs.realpathSync(args.at(-1));
+        const target = fs.realpathSync(path.resolve(opts.cwd || root, args.at(-1)));
         if (within(inventoryBundle, target)) {
           relativeTarget = path.relative(inventoryBundle, target).split(path.sep).join('/') || '.';
         }
@@ -281,6 +281,17 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     return result;
   };
   const text = async (file, args, opts) => (await call(file, args, opts)).stdout;
+  // LLVM treats a trailing name(member) operand as an archive member. Use a
+  // fixed relative name so even parentheses in the scratch parent are harmless.
+  const otool = async (flag, target) => {
+    const directory = fs.mkdtempSync(path.join(scratchRoot, 'peek-otool-'));
+    try {
+      fs.symlinkSync(target, path.join(directory, 'target'));
+      return await text('otool', [flag, 'target'], { cwd: directory });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  };
   const auth = () => ['--keychain', keychain, '--keychain-profile', 'peek-candidate'];
   const staple = async target => { await call('xcrun', ['stapler', 'staple', target]); };
   const validateStaple = async target => { await call('xcrun', ['stapler', 'validate', target]); return true; };
@@ -321,14 +332,14 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     return found.sort();
   }
   async function dependencies(target, bundle, mainRpaths) {
-    const libraries = otoolLibraries(await text('otool', ['-L', target]));
+    const libraries = otoolLibraries(await otool('-L', target));
     // LC_ID_DYLIB is the first -L entry for a dylib; it is not a dependency.
-    const ids = (await text('otool', ['-D', target])).trimEnd().split('\n').slice(1).map(s => s.trim());
+    const ids = (await otool('-D', target)).trimEnd().split('\n').slice(1).map(s => s.trim());
     const role = roleFor(path.relative(bundle, target).split(path.sep).join('/'));
     const executableDir = role === 'library' ? path.join(bundle, 'Contents/MacOS') : path.dirname(target);
     const expand = value => value.replace(/^@loader_path(?=\/|$)/, path.dirname(target))
       .replace(/^@executable_path(?=\/|$)/, executableDir);
-    const localRpaths = rpaths(await text('otool', ['-l', target])).map(expand);
+    const localRpaths = rpaths(await otool('-l', target)).map(expand);
     return libraries.filter(name => !ids.includes(name)).map(installName => {
       if (installName.startsWith('/')) return installName;
       const candidates = installName.startsWith('@rpath/') ? [...localRpaths, ...mainRpaths].map(p =>
@@ -351,7 +362,7 @@ function createAdapter({ root = path.resolve(__dirname, '..'), temp, output,
     need(build.commit === policy.commit && build.dirty === false, 'build-info');
     const files = await discover(bundle);
     const mainDir = path.join(bundle, 'Contents/MacOS');
-    const mainRpaths = rpaths(await text('otool', ['-l', path.join(mainDir, 'Peek')])).map(p =>
+    const mainRpaths = rpaths(await otool('-l', path.join(mainDir, 'Peek'))).map(p =>
       p.replace(/^@(loader_path|executable_path)(?=\/|$)/, mainDir));
     const inventory = [];
     for (const target of files) {
