@@ -35,7 +35,7 @@ shared pieces so that theme and window-mode changes reach it with no per-feature
 | Research (`features/research/home.js`) | hand-rolled + `peek-card` | no literals | no ink block; cards opaque |
 | Bake-off labeling (`features/bake-off-labeling/home.js`) | `peek-grid` | **no theme import**; 24 literal colors | overrides `--theme-*` on body: the only view where cards really frost |
 | Windows switcher (`features/windows/windows.js`) | `peek-grid` | own permanent frost, duplicating `see-through.css` | n/a |
-| Settings (`renderer/settings/settings.js`) | hand-rolled `.item-card` | own `--bg-*`/`--text-*` remap; follows live | cannot be declared: pseudo-tile `peek://app/...` has no manifest entry (C); opaque body; not opened transparent |
+| Settings (`renderer/settings/settings.js`) | `peek-card` and the shared `peek-*` controls; no inline styles | `settings.css` classes over theme tokens, with its own `--bg-*`/`--text-*` aliases; follows live | cannot be declared: pseudo-tile `peek://app/...` has no manifest entry (C); opaque body; not opened transparent |
 | Timers, Lists, Pagestream, Features manager | mixed, hand-rolled | own css, own `.card-*` copies | not declared; Pagestream is always transparent in its own way |
 
 Not examined: hud, gallery, widget-demo, cmd panel, new-tab, page-error, `renderer/page` chrome,
