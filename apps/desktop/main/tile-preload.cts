@@ -2943,6 +2943,12 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('tile:nav:state', { token: tileToken, windowId });
     },
+    copyUrl: (windowId?: number) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.nav requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:nav:copy-url', { token: tileToken, windowId });
+    },
   };
 
   // ── Session ───────────────────────────────────────────────────────────

@@ -16,7 +16,8 @@
  * Every handler validates the capability token before executing.
  */
 
-import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell } from 'electron';
+import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell, clipboard } from 'electron';
+import { pickCopyableUrl } from './front-window-url.js';
 import type { BaseWindow } from 'electron';
 import { broadcast, getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
@@ -8537,6 +8538,32 @@ export function registerTileIpcHandlers(): void {
         title: win.getTitle() || '',
       }
     };
+  });
+
+  // Copies the frontmost window's address (web page or built-in peek://
+  // window) from the main process: the background document is unfocused, so
+  // navigator.clipboard.writeText from there is refused. Separate from
+  // tileResolveWebWindow, which back/forward/reload keep web-only.
+  registerTileIpc('tile:nav:copy-url', { mode: 'handle' }, (event, args: { token: string; windowId?: number }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'nav', 'tile:nav:copy-url', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:nav:copy-url' };
+    }
+    let id: number | null = typeof args.windowId === 'number' ? args.windowId : null;
+    if (id == null) {
+      const front = getTopmostContentWindowId();
+      const frontWin = front != null ? getNativeWindowFor(front) : null;
+      id = frontWin ? frontWin.id : null;
+    }
+    if (!id) return { success: false, error: 'No front window' };
+    const contents = getHybridContentWC(id) ?? getLiveWindow(id)?.webContents ?? null;
+    if (!contents || contents.isDestroyed()) return { success: false, error: 'No front window' };
+    const url = pickCopyableUrl([contents.getURL()]);
+    if (!url) return { success: false, error: 'Window has no address' };
+    clipboard.writeText(url);
+    return { success: true, data: { url } };
   });
 
   // ── tile:session:* strict shims ──────────────────────────────────

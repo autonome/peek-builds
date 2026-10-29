@@ -526,12 +526,9 @@ const registerCoreCommands = () => {
 
   api.commands.register({
     name: 'copy url',
-    description: 'Copy the current web page URL to clipboard',
+    description: 'Copy the frontmost window address to clipboard',
     execute: async () => {
-      const result = await api.nav.state();
-      if (result && result.success && result.data && result.data.url) {
-        await navigator.clipboard.writeText(result.data.url);
-      }
+      await api.nav.copyUrl();
     }
   });
 
