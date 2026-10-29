@@ -4,13 +4,13 @@ import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForExtensionsReady, waitForAppReady } from '../helpers/window-utils';
 
 /**
- * Regression for peek task de704b10: opening (via the cmd palette) a URL that
- * is ALREADY open in a live content window must FOCUS/RAISE that window rather
- * than spawning a duplicate. The fix normalizes the URL (datastore.normalizeUrl)
- * when matching the window registry, so `https://example.com` (typed) and the
- * registry's `https://example.com/` (normalized) are recognized as the same
- * target. This test asserts the user-observable outcome — unchanged content-
- * window count + the existing window raised — independent of that internal.
+ * Plain Enter in the cmd palette on a URL that is ALREADY open in a live content
+ * window opens a NEW window: the panel's open request passes `reuseByUrl: false`
+ * so main's same-URL reuse (which other callers keep) is skipped. Switching to
+ * the open window is the explicit switch action only (see
+ * cmd-switch-to-page.spec.ts). This asserts the user-observable outcome — the
+ * content-window count grows — for a typed `example.com` whose registry entry
+ * is the normalized `https://example.com/`.
  */
 test.describe('Cmd URL window reuse @desktop', () => {
   let app: DesktopApp;
@@ -112,7 +112,7 @@ test.describe('Cmd URL window reuse @desktop', () => {
     });
   };
 
-  test('opening an already-open URL via cmd reuses the window instead of duplicating', async () => {
+  test('plain Enter on an already-open URL opens a new window; the open one is not reused', async () => {
     await waitForExtensionsReady(bgWindow, 15000);
     await waitForAppReady(bgWindow);
 
@@ -169,28 +169,24 @@ test.describe('Cmd URL window reuse @desktop', () => {
     const secondPanel = await openViaCmd('example.com', firstPanel);
     expect(secondPanel).not.toBe(firstPanel);
 
-    // The creation counter must STILL be 1 — no duplicate window was spawned.
-    // This is the core user-observable outcome and the deterministic signal that
-    // distinguishes reuse (counter stays 1) from a duplicate (counter would be 2).
-    const openedCount = await bgWindow.evaluate(() => (window as any).__exampleOpenedCount);
-    expect(openedCount).toBe(1);
+    // Plain Enter opens a NEW window even though the page is open: the creation
+    // counter reaches 2. Switching to the open window is the explicit switch
+    // action only (button, row marker, Cmd+Enter).
+    await bgWindow.waitForFunction(
+      () => (window as any).__exampleOpenedCount === 2,
+      undefined,
+      { timeout: 10000 }
+    );
 
-    // And the live window set confirms it: exactly one example window, same id.
     const afterSecond = await exampleWindows();
-    expect(afterSecond.ids.length).toBe(1);
+    expect(afterSecond.ids.length).toBe(2);
     expect(afterSecond.ids).toContain(firstId);
 
-    // Focus/raise is only observable with a real display. Under HEADLESS the
-    // reuse path skips show()/focus() (guarded by !isHeadless() in the main
-    // process), and BrowserWindow.isFocused() is unreliable, so only assert the
-    // raised window is focused when a display is attached.
-    if (!process.env.HEADLESS) {
-      expect(afterSecond.focusedIds).toContain(firstId);
-    }
-
     // Clean up.
-    await bgWindow.evaluate(async (id: number) => {
-      await (window as any).app.window.close(id);
-    }, firstId);
+    for (const id of afterSecond.ids) {
+      await bgWindow.evaluate(async (winId: number) => {
+        await (window as any).app.window.close(winId);
+      }, id);
+    }
   });
 });

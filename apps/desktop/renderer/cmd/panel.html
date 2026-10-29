@@ -244,21 +244,31 @@
       }
 
       /* A row whose page is open in a window: clicking the marker switches. */
+      /* The marker is the input bar's switch button (same label + icon, cloned by
+         panel.js renderRowMarker) scaled down to row size. */
       .url-open-marker {
-        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
         flex-shrink: 0;
         padding: 1px 6px;
-        border-radius: 4px;
+        height: 18px;
+        box-sizing: border-box;
+        background: rgba(0, 122, 255, 0.18);
+        border: 1px solid rgba(0, 122, 255, 0.45);
+        border-radius: 5px;
+        color: var(--theme-text, #333);
+        font-family: inherit;
         font-size: 10px;
         font-weight: 500;
         white-space: nowrap;
-        background: rgba(0, 122, 255, 0.18);
-        border: 1px solid rgba(0, 122, 255, 0.45);
-        color: var(--theme-text, #333);
+        cursor: pointer;
+        user-select: none;
       }
-      .url-open-marker:hover {
-        background: rgba(0, 122, 255, 0.3);
-      }
+      .url-open-marker:hover { background: var(--cmd-surface-selected); }
+      .url-open-marker:active { transform: scale(0.98); }
+      .url-open-marker svg { display: block; width: 11px; height: 11px; }
+      .url-open-marker kbd { display: none; }
       /* Every row kind: the marker sits at the row's far right end. Command rows
          are block layout (badges float right), so a row with a marker becomes a
          flex row; the badges then sit just before the marker. */

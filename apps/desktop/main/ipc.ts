@@ -3494,7 +3494,10 @@ export function registerWindowHandlers(): void {
     // branches below (`WindowRecord.transient`); decided here, before the
     // window is built, since building it can move key.
     options.transient = windowIsTransient(keyHeldWhileAppInactive, options);
-    if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && !options.key && !opensTransient) {
+    // `reuseByUrl: false` is the caller opting out: the command panel's plain
+    // Enter always opens a new window, and switching to the open one is its
+    // own explicit action (api.window.focus).
+    if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && options.reuseByUrl !== false && !options.key && !opensTransient) {
       // P1.4a hybrid dedup (by url): same rationale as the key path above —
       // BaseWindow page-hosts are invisible to the BrowserWindow.fromId
       // lookups. Reuse an existing hybrid window loading the same url (focus

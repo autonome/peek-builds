@@ -16,7 +16,10 @@ import { recordPick, recordSuggestionPick, rankByUsage, pickedSuggestion } from 
 import { noMatchRow } from './no-match.js';
 import { extraParamRows, prependRows } from './param-rows.js';
 import { findClaimingCommand } from './input-claims.js';
-import { commandOpenUrls } from './open-window-commands.js';
+import {
+  commandOpenUrls, isSwitchableUrl, openWindowIdFor, hasOpenWindowAnswer,
+  withOpenWindowAnswers, inputTargetAddress,
+} from './open-window-commands.js';
 import { pairRowsFor, withPairRows } from './object-pairs.js';
 import { createStateMachine, States, Events, resultsListOpen, selectedRow, commandRowAutoSelect } from './state-machine.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER, inlineCompletionFor, isLoopbackAddress, withDefaultScheme } from './url-completion.js';
@@ -1602,45 +1605,43 @@ function hasModifier(e) {
 
 // ===== URL action (Cmd+Enter: switch to an open page, or open it) =====
 
-// Only web pages and peek pages can be "open in a window".
-function isSwitchableUrl(url) {
-  return typeof url === 'string' && /^(https?|peek):\/\//.test(url);
+// The address of the page the shown inline completion would open, or null.
+// Enter on the completion opens exactly this address.
+function ghostAddress() {
+  if (!urlGhostSuggestion || state.matches.length > 0) return null;
+  if (getValidURL((state.typed || '').trim()).valid) return null;
+  const completion = currentGhostCompletion(state.typed);
+  if (!completion) return null;
+  return urlGhostGranularity === 'full' ? urlGhostSuggestion.url : withDefaultScheme(completion);
 }
 
 /**
- * The address of the thing plain Enter would act on right now, in the order
- * Enter picks among them: the row highlighted after arrowing into the list
- * (a command's `opensUrl` or a Visited page), the shown inline completion when
- * the typed text is no address itself, the typed address, then an auto-selected
- * row (Visited page or the command Enter would run). Null when that thing has
- * no address. The input-bar button and the row markers both read addresses
- * through rowAddress() / openWindowIdFor().
+ * The address of the thing plain Enter would act on right now (see
+ * inputTargetAddress for the order). Null when that thing has no address. The
+ * input-bar button, Cmd+Enter, the lookup set and the row markers all resolve
+ * addresses here, through rowAddress() and openWindowIdFor() (one key per page).
  */
 function currentActionUrl() {
   const fsmState = machine.getState();
   if (fsmState === States.CHAIN_MODE) return null;
   const row = selectedRow(fsmState, state);
-  if (fsmState === States.RESULTS_OPEN && row !== null) return rowAddress(row);
-  const typed = (state.typed || '').trim();
-  const urlResult = getValidURL(typed);
-  if (!urlResult.valid && state.matches.length === 0 && urlGhostSuggestion) {
-    const completion = currentGhostCompletion(state.typed);
-    if (completion) {
-      return urlGhostGranularity === 'full' ? urlGhostSuggestion.url : withDefaultScheme(completion);
-    }
-  }
-  if (urlResult.valid) return urlResult.url;
-  if (row !== null) return rowAddress(row);
+  const typedResult = getValidURL((state.typed || '').trim());
   // A fully-typed command runs with the list closed: no row is highlighted, but
   // Enter still runs the top command.
   const hit = commandRowAutoSelect(state);
-  return hit ? rowAddress(hit.row) : null;
+  return inputTargetAddress({
+    highlighted: { active: fsmState === States.RESULTS_OPEN && row !== null, address: rowAddress(row) },
+    completion: ghostAddress(),
+    typed: typedResult.valid ? typedResult.url : null,
+    selectedRow: rowAddress(row),
+    command: hit ? rowAddress(hit.row) : null,
+  });
 }
 
-// Which of the panel's addresses are open in a window: url → window id, or
-// null when main answered that none is. Holds answers for the addresses the
+// Which of the panel's pages are open in a window: addressKey(url) → window id,
+// or null when main answered that none is. Holds answers for the addresses the
 // panel is showing right now (the URL action's address and every Visited row);
-// an address missing from it has not been asked about yet.
+// a page missing from it has not been asked about yet.
 let openWindowIds = new Map();
 let openWindowQuery = 0;
 let openWindowRefreshTimer = null;
@@ -1663,12 +1664,6 @@ function renderUrlAction() {
   btn.setAttribute('aria-label', 'Switch to page');
 }
 
-// The id of the window showing `address`, or null when none is open (or not yet asked).
-function openWindowIdFor(address) {
-  const id = isSwitchableUrl(address) ? openWindowIds.get(address) : undefined;
-  return typeof id === 'number' ? id : null;
-}
-
 // The address a results row stands for: a command's `opensUrl` for a command row,
 // the page for a Visited row; null for a row without one. `row` is a global
 // results-list index (commands first, then Visited rows).
@@ -1682,15 +1677,17 @@ function rowAddress(row) {
 // "Switch to this tab"). Clicking it switches to the window; picking the row
 // itself does the row's usual thing. Rows carry their address in `data-url`.
 function renderRowMarker(el, url) {
-  const id = openWindowIdFor(url);
+  const id = openWindowIdFor(url, openWindowIds);
   const existing = el.querySelector('.url-open-marker');
   if (id !== null) {
     el.dataset.openWindowId = String(id);
     if (!existing) {
+      // The input bar's switch button (label, icon, key hint), scaled down by CSS.
       const marker = document.createElement('span');
       marker.className = 'url-open-marker';
       marker.setAttribute('role', 'button');
-      marker.textContent = 'Switch to window';
+      const button = document.getElementById('url-action');
+      for (const child of button ? button.children : []) marker.appendChild(child.cloneNode(true));
       marker.title = 'Switch to the window showing this page (Cmd+Enter)';
       marker.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1708,8 +1705,8 @@ function renderRowMarker(el, url) {
 // address has an answer it counts as not open, so the button stays hidden.
 function applyOpenWindows() {
   const url = currentActionUrl();
-  const id = openWindowIdFor(url);
-  urlAction = id !== null ? { url, action: 'switch', id } : null;
+  const id = openWindowIdFor(url, openWindowIds);
+  urlAction =id !== null ? { url, action: 'switch', id } : null;
   renderUrlAction();
   document.querySelectorAll('#results [data-url]').forEach((el) => {
     renderRowMarker(el, el.dataset.url);
@@ -1742,7 +1739,7 @@ function shownSwitchableUrls() {
  */
 function updateUrlAction(force = false) {
   const urls = shownSwitchableUrls();
-  if (!force && urls.every((u) => openWindowIds.has(u))) {
+  if (!force && urls.every((u) => hasOpenWindowAnswer(u, openWindowIds))) {
     applyOpenWindows();
     return;
   }
@@ -1752,9 +1749,7 @@ function updateUrlAction(force = false) {
   if (urls.length === 0) return;
   lookupOpenWindows(urls).then((ids) => {
     if (query !== openWindowQuery) return;
-    const next = new Map(openWindowIds);
-    for (const u of urls) next.set(u, typeof ids[u] === 'number' ? ids[u] : null);
-    openWindowIds = next;
+    openWindowIds = withOpenWindowAnswers(openWindowIds, urls, ids);
     applyOpenWindows();
   });
 }
@@ -1788,16 +1783,34 @@ async function lookupOpenWindow(url) {
 }
 
 /**
- * Carry out the URL action for `url`: bring forward the window showing it, or
- * open it in a new window when none is. A known answer for this address (from
- * the button or a row marker) sends the raise without another round trip;
- * without one, main is asked first. `trackingSourceId` names what was picked
- * for the open path's history.
+ * Open `url` in a NEW window. The one open path for plain Enter and row clicks
+ * (typed address, inline completion, Visited row): main must not hand back a
+ * window that already shows the page (`reuseByUrl: false`) — switching to it is
+ * runUrlAction's job alone. `trackingSourceId` names what was picked for history.
  */
-async function runUrlAction(url, trackingSourceId = 'url-action') {
+function openInNewWindow(url, trackingSourceId) {
+  return api.window.open(url, {
+    role: 'content',
+    width: 1024,
+    height: 768,
+    trackingSource: 'cmd',
+    trackingSourceId,
+    reuseByUrl: false
+  }).catch(error => {
+    log.error('cmd:panel', 'Failed to open URL:', error);
+  });
+}
+
+/**
+ * Switch to the window showing `url` (the input-bar button, a row marker and
+ * Cmd+Enter all end here). A known answer for the page sends the raise without
+ * another round trip; without one, main is asked first. If the page turns out
+ * not to be open any more, it is opened in a new window instead.
+ */
+async function runUrlAction(url) {
   if (!isSwitchableUrl(url)) return;
-  const known = openWindowIds.get(url);
-  const id = typeof known === 'number' ? known : await lookupOpenWindow(url);
+  const known = openWindowIdFor(url, openWindowIds);
+  const id = known !== null ? known : await lookupOpenWindow(url);
   state.lastExecuted = url;
   updateMatchCount(url);
   if (typeof id === 'number') {
@@ -1810,15 +1823,7 @@ async function runUrlAction(url, trackingSourceId = 'url-action') {
     return;
   }
   log('cmd:panel', 'Opening URL in a new window:', url);
-  api.window.open(url, {
-    role: 'content',
-    width: 1024,
-    height: 768,
-    trackingSource: 'cmd',
-    trackingSourceId
-  }).catch(error => {
-    log.error('cmd:panel', 'Failed to open URL:', error);
-  });
+  openInNewWindow(url, 'url-action');
 }
 
 // ===== UI Update Functions =====
@@ -2260,15 +2265,7 @@ function actionHandlers() {
     log('cmd:panel', 'Opening URL history result:', url);
     state.lastExecuted = url;
     updateMatchCount(url);
-    api.window.open(url, {
-      role: 'content',
-      width: 1024,
-      height: 768,
-      trackingSource: 'cmd',
-      trackingSourceId: 'history-result'
-    }).catch(error => {
-      log.error('cmd:panel', 'Failed to open URL history result:', error);
-    });
+    openInNewWindow(url, 'history-result');
   };
 
   return {
@@ -2760,15 +2757,7 @@ function actionHandlers() {
       updateMatchCount(frecencyTarget);
       updateAdaptiveFeedback(trimmedText, frecencyTarget);
 
-      api.window.open(urlResult.url, {
-        role: 'content',
-        width: 1024,
-        height: 768,
-        trackingSource: 'cmd',
-        trackingSourceId: 'url-direct'
-      }).catch(error => {
-        log.error('cmd:panel', 'Failed to open URL:', error);
-      });
+      openInNewWindow(urlResult.url, 'url-direct');
     },
 
     runUrlAction(payload) {
@@ -2785,27 +2774,14 @@ function actionHandlers() {
 
     openUrlGhost() {
       if (!urlGhostSuggestion) return;
-      // Open the CURRENT completion, not the full stored URL: at 'full' (or if
-      // somehow unshown) open the exact stored URL; otherwise synthesize a clean
-      // origin/path from the granularity completion (kills tracking query). The
-      // completion is scheme-less, so the default scheme is re-added — http for
-      // loopback, https otherwise.
-      const completion = currentGhostCompletion(state.typed);
-      const url = (urlGhostGranularity === 'full' || !completion)
-        ? urlGhostSuggestion.url
-        : withDefaultScheme(completion);
+      // Open the CURRENT completion, not the full stored URL (see ghostAddress():
+      // a clean origin/path at the shown granularity, the exact stored URL at
+      // 'full' or if somehow unshown).
+      const url = ghostAddress() || urlGhostSuggestion.url;
       log('cmd:panel', 'Opening URL ghost suggestion:', url);
       state.lastExecuted = url;
       updateMatchCount(url);
-      api.window.open(url, {
-        role: 'content',
-        width: 1024,
-        height: 768,
-        trackingSource: 'cmd',
-        trackingSourceId: 'url-ghost'
-      }).catch(error => {
-        log.error('cmd:panel', 'Failed to open URL ghost suggestion:', error);
-      });
+      openInNewWindow(url, 'url-ghost');
     },
 
     openSelectedUrlResult(_payload, _data, fromState) {

@@ -1570,6 +1570,45 @@ describe('a typed address whose window is open', () => {
   });
 });
 
+describe('an inline completion or Visited row whose window is open', () => {
+  function pageMachine(state) {
+    const machine = makeMachine();
+    machine.setState(state);
+    const data = machine.getMutableData();
+    data.typed = 'wikip';
+    data.matches = [];
+    data.urlMatches = [{ content: 'https://wikipedia.org/' }];
+    machine._actionLog.length = 0;
+    return machine;
+  }
+
+  it('plain Enter on the inline completion opens the page, never switches', () => {
+    const machine = pageMachine(States.TYPING);
+    machine.dispatch(Events.ENTER, { value: 'wikipedia.org', hasUrlGhost: true });
+
+    assert.ok(machine._actionLog.includes('openUrlGhost'));
+    assert.ok(!machine._actionLog.includes('runUrlAction'));
+  });
+
+  it('plain Enter on the highlighted Visited row opens the page, never switches', () => {
+    const machine = pageMachine(States.RESULTS_OPEN);
+    machine.getMutableData().matchIndex = 0;
+    machine.dispatch(Events.ENTER, { value: 'wikip' });
+
+    assert.ok(machine._actionLog.includes('openSelectedUrlResult'));
+    assert.ok(!machine._actionLog.includes('runUrlAction'));
+  });
+
+  it('the marker or Cmd+Enter (URL_ACTION with the address) switches to the window', () => {
+    const machine = pageMachine(States.TYPING);
+    machine.dispatch(Events.URL_ACTION, { url: 'https://wikipedia.org/' });
+
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.ok(machine._actionLog.includes('runUrlAction'));
+    assert.ok(!machine._actionLog.includes('openUrlGhost'));
+  });
+});
+
 // ===== Command whose window is already open =====
 
 describe('a command row whose window is open', () => {
