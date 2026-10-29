@@ -83,7 +83,7 @@
 import api from '../api.js';
 import { PageNotesPane } from './page-notes.js';
 import { createPageWidgetHost, widgetActionFromPath } from './page-widgets.js';
-import { navbarLoadReveal, pointerLeaveHides, SHOWN_BY_LOAD, SHOWN_BY_USER } from './navbar-load-reveal.js';
+import { navbarLoadReveal, activeWindowRevealEvent, pointerLeaveHides, SHOWN_BY_LOAD, SHOWN_BY_USER } from './navbar-load-reveal.js';
 import { normalizeUrlForCompare } from './url-compare.js';
 import { stateFromTags, planPageState } from 'peek://app/lib/page-state.js';
 
@@ -409,7 +409,7 @@ api.subscribe('page-overlay:active', (msg) => {
   // reveals, and takes down a bar the previous window's load held.
   const appeared = !framedWindowIds.has(msg.windowId);
   framedWindowIds.add(msg.windowId);
-  applyLoadReveal(appeared ? 'window-appeared' : 'window-switched', !!msg.loading);
+  applyLoadReveal(activeWindowRevealEvent(appeared, msg.quietOpen), !!msg.loading);
   // Recover any request main still holds pending for this window that this
   // renderer never received — the publish predates our subscription, or a
   // previous overlay renderer got it and this one started empty. Purely

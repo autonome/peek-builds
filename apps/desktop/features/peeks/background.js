@@ -157,6 +157,8 @@ const executeItem = (item) => {
 
     // peek
     keepLive: item.keepLive || false,
+    // Open without flashing the address bar.
+    quietOpen: true,
     persistState: item.persistState || false,
 
     // The window's identity is the SLOT, not the address. Reopening peek N

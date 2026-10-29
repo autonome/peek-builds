@@ -166,6 +166,8 @@ const executeItem = (item) => {
       type: 'panel',
 
       keepLive: item.keepLive || false,
+      // Open without flashing the address bar.
+      quietOpen: true,
       persistState: item.persistState || false,
 
       // Slides emit `screenEdge` ('Up'|'Down'|'Left'|'Right'); the

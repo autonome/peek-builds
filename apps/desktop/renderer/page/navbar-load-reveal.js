@@ -75,6 +75,19 @@ export function navbarLoadReveal(state, event, now, loading = false) {
 }
 
 /**
+ * The reveal event for the chrome reaching a page window. A window opened with
+ * `quietOpen` never reveals on appearing; it still counts as framed, so its
+ * later load-start does not reveal either.
+ *
+ * @param {boolean} appeared the chrome has not framed this window before
+ * @param {boolean} [quietOpen]
+ * @returns {'window-appeared'|'window-switched'}
+ */
+export function activeWindowRevealEvent(appeared, quietOpen = false) {
+  return appeared && quietOpen !== true ? 'window-appeared' : 'window-switched';
+}
+
+/**
  * Whether the pointer moving off the chrome (over the page, or out of the top
  * edge) starts the bar's hide. A bar the load is holding stays up while the
  * pointer moves over the page: the pointer is almost always over the page while

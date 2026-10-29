@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   navbarLoadReveal,
+  activeWindowRevealEvent,
   pointerLeaveHides,
   LOAD_REVEAL_DWELL_MS,
   SHOWN_BY_LOAD,
@@ -117,4 +118,18 @@ test('the pointer moving over a loading page leaves the load-held bar up', () =>
 test('the pointer leaving a bar the user revealed starts its hide', () => {
   assert.equal(pointerLeaveHides(SHOWN_BY_USER), true);
   assert.equal(pointerLeaveHides(null), true);
+});
+
+test('a new window reveals the bar unless it was opened quietly', () => {
+  assert.equal(activeWindowRevealEvent(true), 'window-appeared');
+  assert.equal(activeWindowRevealEvent(true, false), 'window-appeared');
+  assert.equal(activeWindowRevealEvent(true, true), 'window-switched');
+  assert.equal(activeWindowRevealEvent(false, true), 'window-switched');
+});
+
+test('a quietly opened window never reveals the bar, even when it is still loading', () => {
+  const event = activeWindowRevealEvent(true, true);
+  assert.equal(navbarLoadReveal(HIDDEN, event, 0, true).show, false);
+  // Framed on appearing, so its later first load does not reveal either.
+  assert.equal(navbarLoadReveal(HIDDEN_REVEALED, 'load-start', 10).show, false);
 });

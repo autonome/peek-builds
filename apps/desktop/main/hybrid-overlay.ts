@@ -436,8 +436,11 @@ function sendActiveHandoff(id: number | null): void {
   // entry is Electron-id-keyed, so convert through the sanctioned mapping.
   const activeMachineId = getWindowIdFor(id);
   const activeMachineRec = activeMachineId != null ? getMachineWindowRecord(activeMachineId) : undefined;
+  // A window opened with `quietOpen` never reveals the address bar on open.
+  const quietOpen = getWindowInfo(id)?.params?.quietOpen === true;
   publish(getSystemAddress(), 'page-overlay:active', {
     windowId: id,
+    ...(quietOpen ? { quietOpen: true } : {}),
     url: entry.url(),
     title: entry.title(),
     favicon,
