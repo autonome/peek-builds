@@ -66,16 +66,34 @@ body.see-through .card-delete-btn:hover {
   min-height: var(--card-default-height, 200px);
 }
 
-/* A card with an image stays at the default height: the image takes the
-   space the title and meta leave, cropped from the top. */
+/* A card with an image stays at the default height and the image fills the
+   whole card, cropped from the top; title and meta sit over it on a
+   background so they stay readable. */
 .cards > peek-card:has(> .card-image)::part(card) {
+  position: relative;
   height: var(--card-default-height, 200px);
+  overflow: hidden;
 }
 
 .cards > peek-card:has(> .card-image)::part(media) {
-  flex: 100 1 0;
-  min-height: 0;
-  overflow: hidden;
+  position: absolute;
+  inset: 0;
+}
+
+.cards > peek-card:has(> .card-image)::part(header),
+.cards > peek-card:has(> .card-image)::part(body),
+.cards > peek-card:has(> .card-image)::part(footer) {
+  position: relative;
+}
+
+.cards > peek-card:has(> .card-image) .card-header-row,
+.cards > peek-card:has(> .card-image) .card-meta {
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--base00, #1e1e1e) 85%, transparent);
 }
 
 .card-image {
