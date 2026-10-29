@@ -326,9 +326,18 @@ peek-grid.cards[view-mode="fit"] .card-title {
 /* The close button is the one thing in the header that takes its own
    clicks. The header overlay above is deliberately pointer-transparent so
    the whole card stays a single target for picking a window, which would
-   otherwise swallow the button along with everything else. */
+   otherwise swallow the button along with everything else.
+   The header chip is sized to its contents, so a button inside it would
+   sit against the title; it is pinned to the card's top-right corner on
+   its own dark surface instead, the header overlay being its containing block. */
 peek-grid.cards[view-mode="fit"] .card-close {
   pointer-events: auto;
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  margin-left: 0;
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 4px;
 }
 
 /* Hidden badge — flipped colours so it reads against the dark wrapper
